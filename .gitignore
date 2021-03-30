@@ -5,3 +5,8 @@ scripts/basic/docproc
 scripts/basic/fixdep
 scripts/basic/split-include
 scripts/kconfig/conf
+include/config/
+scripts/conmakehash
+scripts/kallsyms
+scripts/mod/modpost
+scripts/mod/mk_elfconfig
