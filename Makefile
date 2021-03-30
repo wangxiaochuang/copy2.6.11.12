@@ -11,7 +11,7 @@ NAME=Woozy Beaver
 # expect to learn how to build the kernel reading this file.
 
 # Do not print "Entering directory ..."
-# MAKEFLAGS += --no-print-directory
+MAKEFLAGS += --no-print-directory
 
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.
@@ -384,9 +384,7 @@ RCS_TAR_IGNORE := --exclude SCCS --exclude BitKeeper --exclude .svn --exclude CV
 # Basic helpers built in scripts/
 .PHONY: scripts_basic
 scripts_basic:
-	# @make -f scripts/Makefile.build obj=scripts/basic
 	$(Q)$(MAKE) $(build)=scripts/basic
-
 
 .PHONY: outputmakefile
 # outputmakefile generate a Makefile to be placed in output directory, if
@@ -451,7 +449,6 @@ include $(srctree)/arch/$(ARCH)/Makefile
 export KBUILD_DEFCONFIG
 
 config: scripts_basic outputmakefile FORCE
-	# @make -f scripts/Makefile.build obj=scripts/kconfig config
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
 %config: scripts_basic outputmakefile FORCE
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
