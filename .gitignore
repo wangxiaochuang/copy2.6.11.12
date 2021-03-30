@@ -1,0 +1,7 @@
+.vscode/
+*.o
+*.cmd
+scripts/basic/docproc
+scripts/basic/fixdep
+scripts/basic/split-include
+scripts/kconfig/conf

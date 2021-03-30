@@ -11,7 +11,7 @@ NAME=Woozy Beaver
 # expect to learn how to build the kernel reading this file.
 
 # Do not print "Entering directory ..."
-MAKEFLAGS += --no-print-directory
+# MAKEFLAGS += --no-print-directory
 
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.
@@ -451,6 +451,7 @@ include $(srctree)/arch/$(ARCH)/Makefile
 export KBUILD_DEFCONFIG
 
 config: scripts_basic outputmakefile FORCE
+	# @make -f scripts/Makefile.build obj=scripts/kconfig config
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
 %config: scripts_basic outputmakefile FORCE
 	$(Q)$(MAKE) $(build)=scripts/kconfig $@
