@@ -99,18 +99,18 @@ core-$(CONFIG_X86_ES7000)	:= arch/i386/mach-es7000/
 # default subarch .h files
 mflags-y += -Iinclude/asm-i386/mach-default
 
-head-y := arch/i386/kernel/head.o arch/i386/kernel/init_task.o
+head-y := arch/i386/kernel/head.o #arch/i386/kernel/init_task.o
 
-libs-y 					+= arch/i386/lib/
-core-y					+= arch/i386/kernel/ \
-					   arch/i386/mm/ \
-					   arch/i386/$(mcore-y)/ \
-					   arch/i386/crypto/
-drivers-$(CONFIG_MATH_EMULATION)	+= arch/i386/math-emu/
-drivers-$(CONFIG_PCI)			+= arch/i386/pci/
-# must be linked after kernel/
-drivers-$(CONFIG_OPROFILE)		+= arch/i386/oprofile/
-drivers-$(CONFIG_PM)			+= arch/i386/power/
+# libs-y 					+= arch/i386/lib/
+# core-y					+= arch/i386/kernel/ \
+# 					   arch/i386/mm/ \
+# 					   arch/i386/$(mcore-y)/ \
+# 					   arch/i386/crypto/
+# drivers-$(CONFIG_MATH_EMULATION)	+= arch/i386/math-emu/
+# drivers-$(CONFIG_PCI)			+= arch/i386/pci/
+# # must be linked after kernel/
+# drivers-$(CONFIG_OPROFILE)		+= arch/i386/oprofile/
+# drivers-$(CONFIG_PM)			+= arch/i386/power/
 
 CFLAGS += $(mflags-y)
 AFLAGS += $(mflags-y)
@@ -140,7 +140,7 @@ zdisk bzdisk: vmlinux
 install fdimage fdimage144 fdimage288: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) BOOTIMAGE=$(KBUILD_IMAGE) $@
 
-prepare: include/asm-$(ARCH)/asm_offsets.h
+prepare: #include/asm-$(ARCH)/asm_offsets.h
 CLEAN_FILES += include/asm-$(ARCH)/asm_offsets.h
 
 arch/$(ARCH)/kernel/asm-offsets.s: include/asm include/linux/version.h \

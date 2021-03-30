@@ -11,7 +11,7 @@ NAME=Woozy Beaver
 # expect to learn how to build the kernel reading this file.
 
 # Do not print "Entering directory ..."
-MAKEFLAGS += --no-print-directory
+MAKEFLAGS += --no-print-directory -r
 
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.
@@ -607,9 +607,9 @@ libs-y		:= $(libs-y1) $(libs-y2)
 #
 # System.map is generated to document addresses of all kernel symbols
 
-vmlinux-init := $(head-y) $(init-y)
+vmlinux-init := $(head-y) #$(init-y)
 vmlinux-main := $(core-y) $(libs-y) $(drivers-y) $(net-y)
-vmlinux-all  := $(vmlinux-init) $(vmlinux-main)
+vmlinux-all  := $(vmlinux-init) #$(vmlinux-main)
 vmlinux-lds  := arch/$(ARCH)/kernel/vmlinux.lds
 
 # Rule to link vmlinux - also used during CONFIG_KALLSYMS
@@ -724,7 +724,7 @@ $(KALLSYMS): scripts ;
 endif # ifdef CONFIG_KALLSYMS
 
 # vmlinux image - including updated kernel symbols
-vmlinux: $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) $(kallsyms.o) FORCE
+vmlinux: $(vmlinux-lds) $(vmlinux-init) FORCE #$(vmlinux-main) $(kallsyms.o)
 	$(call if_changed_rule,vmlinux__)
 
 # The actual objects are generated when descending, 
