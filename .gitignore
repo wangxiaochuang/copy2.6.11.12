@@ -1,5 +1,11 @@
+vmlinux
 .vscode/
+.tmp_*
+*.a
+*.s
+*.map
 *.o
+*.so
 *.cmd
 *.lds
 .version

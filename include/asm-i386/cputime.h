@@ -1,6 +1,6 @@
-#ifndef _ASM_GENERIC_CPUTIME_H
-#define _ASM_GENERIC_CPUTIME_H
+#ifndef __I386_CPUTIME_H
+#define __I386_CPUTIME_H
 
-typedef unsigned long cputime_t;
+#include <asm-generic/cputime.h>
 
-#endif
+#endif /* __I386_CPUTIME_H */

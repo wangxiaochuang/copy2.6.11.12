@@ -798,7 +798,6 @@ export CPPFLAGS_vmlinux.lds += -P -C -U$(ARCH)
 %.o: %.c scripts FORCE
 	$(Q)$(MAKE) $(build)=$(@D) $@
 %/: scripts prepare FORCE
-	$(error xxxxxxxxxx)
 	$(Q)$(MAKE) KBUILD_MODULES=$(if $(CONFIG_MODULES),1) $(build)=$(@D)
 %.lst: %.c scripts FORCE
 	$(Q)$(MAKE) $(build)=$(@D) $@
