@@ -39,8 +39,6 @@
 	exit(1);							\
     }
 
-
-
 int main(int argc, const char * argv [])
 {
     const char * str_my_name;
@@ -130,7 +128,8 @@ int main(int argc, const char * argv [])
 	is_same = 0;
 	if ((fp_target = fopen(ptarget, "r")) != NULL)
 	{
-	    fgets(old_line, buffer_size, fp_target);
+		char *unuse __attribute__((unused));
+	    unuse = fgets(old_line, buffer_size, fp_target);
 	    if (fclose(fp_target) != 0)
 		ERROR_EXIT(ptarget);
 	    if (!strcmp(line, old_line))

@@ -8,7 +8,7 @@ vmlinux
 *.so
 *.cmd
 *.lds
-.version
+\.version
 scripts/basic/docproc
 scripts/basic/fixdep
 scripts/basic/split-include
@@ -22,3 +22,4 @@ usr/gen_init_cpio
 usr/initramfs_data.cpio
 usr/initramfs_data.cpio.gz
 usr/initramfs_list
+include/linux/compile.h
