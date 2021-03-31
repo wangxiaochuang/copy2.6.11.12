@@ -3,13 +3,8 @@
  * This code generates raw asm output which is post-processed
  * to extract and format the required data.
  */
-
-#include <linux/sched.h>
-#include <linux/signal.h>
-#include <linux/personality.h>
-#include <asm/ucontext.h>
-#include "sigframe.h"
-#include <asm/fixmap.h>
+#include <linux/stddef.h>
+#include <asm/sigcontext.h>
 #include <asm/processor.h>
 #include <asm/thread_info.h>
 

@@ -1,6 +1,8 @@
 .vscode/
 *.o
 *.cmd
+*.lds
+.version
 scripts/basic/docproc
 scripts/basic/fixdep
 scripts/basic/split-include
@@ -10,3 +12,7 @@ scripts/conmakehash
 scripts/kallsyms
 scripts/mod/modpost
 scripts/mod/mk_elfconfig
+usr/gen_init_cpio
+usr/initramfs_data.cpio
+usr/initramfs_data.cpio.gz
+usr/initramfs_list

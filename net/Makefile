@@ -6,12 +6,12 @@
 #
 
 # obj-y	:= nonet.o
-# 
-# obj-$(CONFIG_NET)		:= socket.o core/
-# 
+
+obj-$(CONFIG_NET)		:= socket.o #core/
+
 # tmp-$(CONFIG_COMPAT) 		:= compat.o
 # obj-$(CONFIG_NET)		+= $(tmp-y)
-# 
+
 # # LLC has to be linked before the files in net/802/
 # obj-$(CONFIG_LLC)		+= llc/
 # obj-$(CONFIG_NET)		+= ethernet/ 802/ sched/ netlink/
@@ -42,7 +42,7 @@
 # obj-$(CONFIG_ECONET)		+= econet/
 # obj-$(CONFIG_VLAN_8021Q)	+= 8021q/
 # obj-$(CONFIG_IP_SCTP)		+= sctp/
-# 
+
 # ifeq ($(CONFIG_NET),y)
 # obj-$(CONFIG_SYSCTL)		+= sysctl_net.o
 # endif

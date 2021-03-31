@@ -3,10 +3,10 @@
 #
 
 # proc-crypto-$(CONFIG_PROC_FS) = proc.o
-# 
-# obj-$(CONFIG_CRYPTO) += api.o scatterwalk.o cipher.o digest.o compress.o \
-# 			$(proc-crypto-y)
-# 
+
+obj-$(CONFIG_CRYPTO) += api.o #scatterwalk.o cipher.o digest.o compress.o \
+			#$(proc-crypto-y)
+
 # obj-$(CONFIG_CRYPTO_HMAC) += hmac.o
 # obj-$(CONFIG_CRYPTO_NULL) += crypto_null.o
 # obj-$(CONFIG_CRYPTO_MD4) += md4.o
@@ -29,5 +29,5 @@
 # obj-$(CONFIG_CRYPTO_DEFLATE) += deflate.o
 # obj-$(CONFIG_CRYPTO_MICHAEL_MIC) += michael_mic.o
 # obj-$(CONFIG_CRYPTO_CRC32C) += crc32c.o
-# 
+
 # obj-$(CONFIG_CRYPTO_TEST) += tcrypt.o

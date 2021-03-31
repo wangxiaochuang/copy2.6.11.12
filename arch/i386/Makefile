@@ -102,7 +102,7 @@ mflags-y += -Iinclude/asm-i386/mach-default
 head-y := arch/i386/kernel/head.o #arch/i386/kernel/init_task.o
 
 # libs-y 					+= arch/i386/lib/
-# core-y					+= arch/i386/kernel/ \
+core-y					+= arch/i386/kernel/
 # 					   arch/i386/mm/ \
 # 					   arch/i386/$(mcore-y)/ \
 # 					   arch/i386/crypto/
@@ -140,7 +140,7 @@ zdisk bzdisk: vmlinux
 install fdimage fdimage144 fdimage288: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) BOOTIMAGE=$(KBUILD_IMAGE) $@
 
-prepare: #include/asm-$(ARCH)/asm_offsets.h
+prepare: include/asm-$(ARCH)/asm_offsets.h
 CLEAN_FILES += include/asm-$(ARCH)/asm_offsets.h
 
 arch/$(ARCH)/kernel/asm-offsets.s: include/asm include/linux/version.h \

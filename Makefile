@@ -724,12 +724,18 @@ $(KALLSYMS): scripts ;
 endif # ifdef CONFIG_KALLSYMS
 
 # vmlinux image - including updated kernel symbols
-vmlinux: $(vmlinux-lds) $(vmlinux-init) FORCE #$(vmlinux-main) $(kallsyms.o)
+vmlinux: $(vmlinux-lds) $(vmlinux-init) FORCE $(vmlinux-main) $(kallsyms.o)
 	$(call if_changed_rule,vmlinux__)
 
 # The actual objects are generated when descending, 
 # make sure no implicit rule kicks in
-$(sort $(vmlinux-init) $(vmlinux-main)) $(vmlinux-lds): $(vmlinux-dirs) ;
+$(sort $(vmlinux-init) $(vmlinux-main)) $(vmlinux-lds): $(vmlinux-dirs);
+
+# mytest: $(vmlinux-lds) FORCE
+# 	$(Q)$(MAKE) $(build)=arch/i386/kernel $(vmlinux-lds)
+
+$(vmlinux-lds): $(vmlinux-lds).S FORCE
+	$(Q)$(MAKE) $(build)=$(@D) $@
 
 # Handle descending into subdirectories listed in $(vmlinux-dirs)
 # Preset locale variables to speed up the build process. Limit locale
@@ -791,7 +797,8 @@ export CPPFLAGS_vmlinux.lds += -P -C -U$(ARCH)
 	$(Q)$(MAKE) $(build)=$(@D) $@
 %.o: %.c scripts FORCE
 	$(Q)$(MAKE) $(build)=$(@D) $@
-%/:      scripts prepare FORCE
+%/: scripts prepare FORCE
+	$(error xxxxxxxxxx)
 	$(Q)$(MAKE) KBUILD_MODULES=$(if $(CONFIG_MODULES),1) $(build)=$(@D)
 %.lst: %.c scripts FORCE
 	$(Q)$(MAKE) $(build)=$(@D) $@

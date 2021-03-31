@@ -5,24 +5,24 @@
 # Rewritten to use lists instead of if-statements.
 #
 
-# obj-$(CONFIG_PCI)		+= pci/
+obj-$(CONFIG_PCI)		+= pci/
 # obj-$(CONFIG_PARISC)		+= parisc/
 # obj-y				+= video/
 # obj-$(CONFIG_ACPI_BOOT)		+= acpi/
-# # PnP must come after ACPI since it will eventually need to check if acpi
-# # was used and do nothing if so
+# PnP must come after ACPI since it will eventually need to check if acpi
+# was used and do nothing if so
 # obj-$(CONFIG_PNP)		+= pnp/
-# 
-# # char/ comes before serial/ etc so that the VT console is the boot-time
-# # default.
+
+# char/ comes before serial/ etc so that the VT console is the boot-time
+# default.
 # obj-y				+= char/
-# 
-# # i810fb and intelfb depend on char/agp/
+
+# i810fb and intelfb depend on char/agp/
 # obj-$(CONFIG_FB_I810)           += video/i810/
 # obj-$(CONFIG_FB_INTEL)          += video/intelfb/
-# 
-# # we also need input/serio early so serio bus is initialized by the time
-# # serial drivers start registering their serio ports
+
+# we also need input/serio early so serio bus is initialized by the time
+# serial drivers start registering their serio ports
 # obj-$(CONFIG_SERIO)		+= input/serio/
 # obj-y				+= serial/
 # obj-$(CONFIG_PARPORT)		+= parport/
