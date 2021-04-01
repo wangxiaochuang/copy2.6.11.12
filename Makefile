@@ -528,7 +528,7 @@ ifdef CONFIG_DEBUG_INFO
 CFLAGS		+= -g
 endif
 
-include $(srctree)/arch/$(ARCH)/Makefile
+-include $(srctree)/arch/$(ARCH)/Makefile
 
 # warn about C99 declaration after statement
 CFLAGS += $(call cc-option,-Wdeclaration-after-statement,)

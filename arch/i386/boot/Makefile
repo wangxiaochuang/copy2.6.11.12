@@ -33,6 +33,8 @@ hostprogs-y	:= tools/build
 
 HOSTCFLAGS_build.o := $(LINUXINCLUDE)
 
+FDIMG		?= ../myfd.img
+
 # ---------------------------------------------------------------------------
 
 $(obj)/zImage:  IMAGE_OFFSET := 0x1000
@@ -69,12 +71,14 @@ $(obj)/mtools.conf: $(src)/mtools.conf.in
 	sed -e 's|@OBJ@|$(obj)|g' < $< > $@
 
 # This requires write access to /dev/fd0
-zdisk: $(BOOTIMAGE) $(obj)/mtools.conf
-	MTOOLSRC=$(obj)/mtools.conf mformat a:			; sync
-	syslinux /dev/fd0					; sync
-	echo 'default linux $(FDARGS)' | \
-		MTOOLSRC=$(src)/mtools.conf mcopy - a:syslinux.cfg
-	MTOOLSRC=$(obj)/mtools.conf mcopy $(BOOTIMAGE) a:linux	; sync
+# zdisk: $(BOOTIMAGE) $(obj)/mtools.conf
+# 	MTOOLSRC=$(obj)/mtools.conf mformat a:			; sync
+# 	syslinux /dev/fd0					; sync
+# 	echo 'default linux $(FDARGS)' | \
+# 		MTOOLSRC=$(src)/mtools.conf mcopy - a:syslinux.cfg
+# 	MTOOLSRC=$(obj)/mtools.conf mcopy $(BOOTIMAGE) a:linux	; sync
+zdisk: $(BOOTIMAGE)
+	dd conv=notrunc bs=8192 if=$(BOOTIMAGE) of=$(FDIMG)
 
 # These require being root or having syslinux 2.02 or higher installed
 fdimage fdimage144: $(BOOTIMAGE) $(obj)/mtools.conf
