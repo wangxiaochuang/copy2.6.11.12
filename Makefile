@@ -528,7 +528,7 @@ ifdef CONFIG_DEBUG_INFO
 CFLAGS		+= -g
 endif
 
--include $(srctree)/arch/$(ARCH)/Makefile
+include $(srctree)/arch/$(ARCH)/Makefile
 
 # warn about C99 declaration after statement
 CFLAGS += $(call cc-option,-Wdeclaration-after-statement,)
@@ -607,9 +607,9 @@ libs-y		:= $(libs-y1) $(libs-y2)
 #
 # System.map is generated to document addresses of all kernel symbols
 
-vmlinux-init := $(head-y) #$(init-y)
+vmlinux-init := $(head-y) $(init-y)
 vmlinux-main := $(core-y) $(libs-y) $(drivers-y) $(net-y)
-vmlinux-all  := $(vmlinux-init) #$(vmlinux-main)
+vmlinux-all  := $(vmlinux-init) $(vmlinux-main)
 vmlinux-lds  := arch/$(ARCH)/kernel/vmlinux.lds
 
 # Rule to link vmlinux - also used during CONFIG_KALLSYMS
@@ -724,18 +724,12 @@ $(KALLSYMS): scripts ;
 endif # ifdef CONFIG_KALLSYMS
 
 # vmlinux image - including updated kernel symbols
-vmlinux: $(vmlinux-lds) $(vmlinux-init) FORCE $(vmlinux-main) $(kallsyms.o)
+vmlinux: $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) $(kallsyms.o) FORCE
 	$(call if_changed_rule,vmlinux__)
 
 # The actual objects are generated when descending, 
 # make sure no implicit rule kicks in
-$(sort $(vmlinux-init) $(vmlinux-main)) $(vmlinux-lds): $(vmlinux-dirs);
-
-# mytest: $(vmlinux-lds) FORCE
-# 	$(Q)$(MAKE) $(build)=arch/i386/kernel $(vmlinux-lds)
-
-$(vmlinux-lds): $(vmlinux-lds).S FORCE
-	$(Q)$(MAKE) $(build)=$(@D) $@
+$(sort $(vmlinux-init) $(vmlinux-main)) $(vmlinux-lds): $(vmlinux-dirs) ;
 
 # Handle descending into subdirectories listed in $(vmlinux-dirs)
 # Preset locale variables to speed up the build process. Limit locale
@@ -797,7 +791,7 @@ export CPPFLAGS_vmlinux.lds += -P -C -U$(ARCH)
 	$(Q)$(MAKE) $(build)=$(@D) $@
 %.o: %.c scripts FORCE
 	$(Q)$(MAKE) $(build)=$(@D) $@
-%/: scripts prepare FORCE
+%/:      scripts prepare FORCE
 	$(Q)$(MAKE) KBUILD_MODULES=$(if $(CONFIG_MODULES),1) $(build)=$(@D)
 %.lst: %.c scripts FORCE
 	$(Q)$(MAKE) $(build)=$(@D) $@

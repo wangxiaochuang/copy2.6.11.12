@@ -8,7 +8,13 @@ vmlinux
 *.so
 *.cmd
 *.lds
+*.bin
+*.gz
 \.version
+zImage
+arch/i386/boot/tools/build
+arch/i386/boot/setup
+arch/i386/boot/bootsect
 scripts/basic/docproc
 scripts/basic/fixdep
 scripts/basic/split-include
@@ -23,3 +29,4 @@ usr/initramfs_data.cpio
 usr/initramfs_data.cpio.gz
 usr/initramfs_list
 include/linux/compile.h
+include/asm-i386/asm_offsets.h
