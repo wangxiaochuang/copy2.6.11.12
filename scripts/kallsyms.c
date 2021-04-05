@@ -117,9 +117,8 @@ read_symbol(FILE *in, struct sym_entry *s)
 	rc = fscanf(in, "%llx %c %499s\n", &s->addr, &s->type, str);
 	if (rc != 3) {
 		if (rc != EOF) {
-			char *unuse __attribute__((unused));
 			/* skip line */
-			unuse = fgets(str, 500, in);
+			fgets(str, 500, in);
 		}
 		return -1;
 	}
@@ -150,8 +149,8 @@ read_symbol(FILE *in, struct sym_entry *s)
 	/* include the type field in the symbol name, so that it gets
 	 * compressed together */
 	s->len = strlen(str) + 1;
-	s->sym = (unsigned char *) malloc(s->len + 1);
-	strcpy((char *)s->sym + 1, str);
+	s->sym = (char *) malloc(s->len + 1);
+	strcpy(s->sym + 1, str);
 	s->sym[0] = s->type;
 
 	return 0;
@@ -191,17 +190,17 @@ symbol_valid(struct sym_entry *s)
 		 * they may get dropped in pass 2, which breaks the kallsyms
 		 * rules.
 		 */
-		if ((s->addr == _etext && strcmp((char *)s->sym + 1, "_etext")) ||
-		    (s->addr == _einittext && strcmp((char *)s->sym + 1, "_einittext")))
+		if ((s->addr == _etext && strcmp(s->sym + 1, "_etext")) ||
+		    (s->addr == _einittext && strcmp(s->sym + 1, "_einittext")))
 			return 0;
 	}
 
 	/* Exclude symbols which vary between passes. */
-	if (strstr((char *)s->sym + 1, "_compiled."))
+	if (strstr(s->sym + 1, "_compiled."))
 		return 0;
 
 	for (i = 0; special_symbols[i]; i++)
-		if( strcmp((char *)s->sym + 1, special_symbols[i]) == 0 )
+		if( strcmp(s->sym + 1, special_symbols[i]) == 0 )
 			return 0;
 
 	return 1;

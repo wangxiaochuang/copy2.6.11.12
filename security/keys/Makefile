@@ -2,7 +2,9 @@
 # Makefile for key management
 #
 
-obj-y := key.o
+obj-y := key.o \
+	process_keys.o \
+	keyring.o
 # obj-y := \
 # 	key.o \
 # 	keyring.o \

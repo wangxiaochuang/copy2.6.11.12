@@ -2,12 +2,14 @@
 # Makefile for the linux kernel.
 #
 
-extra-y := head.o #init_task.o vmlinux.lds
+extra-y := head.o init_task.o vmlinux.lds
 
-obj-y	:= process.o time.o #semaphore.o signal.o entry.o traps.o irq.o vm86.o \
+# obj-y	:= process.o semaphore.o signal.o entry.o traps.o irq.o vm86.o \
 # 		ptrace.o time.o ioport.o ldt.o setup.o i8259.o sys_i386.o \
 # 		pci-dma.o i386_ksyms.o i387.o dmi_scan.o bootflag.o \
 # 		doublefault.o quirks.o
+obj-y	:= process.o semaphore.o traps.o \
+		time.o setup.o
 
 # obj-y				+= cpu/
 # obj-y				+= timers/
@@ -18,7 +20,7 @@ obj-y	:= process.o time.o #semaphore.o signal.o entry.o traps.o irq.o vm86.o \
 # obj-$(CONFIG_X86_CPUID)		+= cpuid.o
 # obj-$(CONFIG_MICROCODE)		+= microcode.o
 # obj-$(CONFIG_APM)		+= apm.o
-# obj-$(CONFIG_X86_SMP)		+= smp.o smpboot.o
+obj-$(CONFIG_X86_SMP)		+= smp.o smpboot.o
 # obj-$(CONFIG_X86_TRAMPOLINE)	+= trampoline.o
 # obj-$(CONFIG_X86_MPPARSE)	+= mpparse.o
 # obj-$(CONFIG_X86_LOCAL_APIC)	+= apic.o nmi.o

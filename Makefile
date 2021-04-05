@@ -3,6 +3,7 @@ PATCHLEVEL = 6
 SUBLEVEL = 11
 EXTRAVERSION = .12
 NAME=Woozy Beaver
+KBUILD_VERBOSE=1
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

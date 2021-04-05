@@ -88,6 +88,7 @@ struct thread_info {
 static inline struct thread_info *current_thread_info(void)
 {
 	struct thread_info *ti;
+	// 将当前esp按8k对齐的地址就是thread_info的地址
 	__asm__("andl %%esp,%0; ":"=r" (ti) : "0" (~(THREAD_SIZE - 1)));
 	return ti;
 }

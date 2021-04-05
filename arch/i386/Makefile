@@ -99,7 +99,7 @@ core-$(CONFIG_X86_ES7000)	:= arch/i386/mach-es7000/
 # default subarch .h files
 mflags-y += -Iinclude/asm-i386/mach-default
 
-head-y := arch/i386/kernel/head.o #arch/i386/kernel/init_task.o
+head-y := arch/i386/kernel/head.o arch/i386/kernel/init_task.o
 
 # libs-y 					+= arch/i386/lib/
 core-y					+= arch/i386/kernel/
