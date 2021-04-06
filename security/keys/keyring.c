@@ -41,7 +41,6 @@ static int keyring_match(const struct key *keyring, const void *description) {
 }
 
 static void keyring_destroy(struct key *keyring) {
-    return 0;
 }
 
 static void keyring_describe(const struct key *keyring, struct seq_file *m) {

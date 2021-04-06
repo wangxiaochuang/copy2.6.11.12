@@ -118,7 +118,8 @@ read_symbol(FILE *in, struct sym_entry *s)
 	if (rc != 3) {
 		if (rc != EOF) {
 			/* skip line */
-			fgets(str, 500, in);
+			char *tmp __attribute__((unused));
+			tmp = fgets(str, 500, in);
 		}
 		return -1;
 	}
@@ -200,7 +201,7 @@ symbol_valid(struct sym_entry *s)
 		return 0;
 
 	for (i = 0; special_symbols[i]; i++)
-		if( strcmp(s->sym + 1, special_symbols[i]) == 0 )
+		if( strcmp((char *)s->sym + 1, special_symbols[i]) == 0 )
 			return 0;
 
 	return 1;

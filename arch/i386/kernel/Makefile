@@ -11,7 +11,7 @@ extra-y := head.o init_task.o vmlinux.lds
 obj-y	:= process.o semaphore.o traps.o \
 		time.o setup.o
 
-# obj-y				+= cpu/
+obj-y				+= cpu/
 # obj-y				+= timers/
 # obj-$(CONFIG_ACPI_BOOT)		+= acpi/
 # obj-$(CONFIG_X86_BIOS_REBOOT)	+= reboot.o

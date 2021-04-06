@@ -3,6 +3,9 @@
  * Linux kernel version: 2.6.11.12
  * Tue Mar 30 16:08:18 2021
  */
+#ifndef __KERNEL__
+#define __KERNEL__
+#endif
 #define AUTOCONF_INCLUDED
 #define CONFIG_X86 1
 #define CONFIG_MMU 1

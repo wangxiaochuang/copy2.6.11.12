@@ -43,11 +43,14 @@
 enum system_states system_state;
 EXPORT_SYMBOL(system_state);
 
+extern void setup_arch(char **);
+
 asmlinkage void __init start_kernel(void) {
     char *command_line;
     extern struct kernel_param __start___param[], __stop__param[];
     lock_kernel();
     page_address_init();
     printk(linux_banner);
+    setup_arch(&command_line);
     for(;;);
 }
