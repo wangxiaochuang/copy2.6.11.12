@@ -14,6 +14,8 @@
 
 #include "do_mounts.h"
 
+int root_mountflags = MS_RDONLY | MS_VERBOSE;
+
 /* this is initialized in init/main.c */
 dev_t ROOT_DEV;
 

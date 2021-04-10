@@ -28,7 +28,7 @@
 
 ENTRY(startup_32)
     cld
-    lgdt boot_gdt_descr - __PAGE_OFFSET
+    lgdt boot_gdt_descr - __PAGE_OFFSET         # 这里只加载了启动阶段使用的全局描述符表
     movl $__BOOT_DS, %eax
     movl %eax,%ds
 	movl %eax,%es
@@ -65,11 +65,19 @@ page_pde_offset = (__PAGE_OFFSET >> 20)
     leal (INIT_MAP_BEYOND_END+0x007)(%edi), %ebp
     cmpl %ebp, %eax         # 0x400007 - 0x107000
     jb 10b
-    movl %edi, (init_pg_tables_end - __PAGE_OFFSET)     # 0x10700 pg0的后面
+    movl %edi, (init_pg_tables_end - __PAGE_OFFSET)     # 0x10700 pg0的最后地址赋值给init_pg_tables_end
 
 #ifdef CONFIG_SMP
     xorl %ebx, %ebx
     jmp 3f
+
+ENTRY(startup_32_smp)
+	cld
+	movl $(__BOOT_DS),%eax
+	movl %eax,%ds
+	movl %eax,%es
+	movl %eax,%fs
+	movl %eax,%gs
     hlt
 3:
 #endif  /* CONFIG_SMP */
@@ -98,7 +106,7 @@ page_pde_offset = (__PAGE_OFFSET >> 20)
     movl $boot_params, %edi
     movl $(PARAM_SIZE/4),%ecx
 	cld
-	rep movsl
+	rep movsl                   # copy from 0x90000 to boot_params for 2048 byte
     movl boot_params+NEW_CL_POINTER, %esi   # 起始就是将0x90228位置的一个双字给到esi
     andl %esi, %esi
     jnz 2f
@@ -106,7 +114,10 @@ page_pde_offset = (__PAGE_OFFSET >> 20)
     jne 1f
     hlt
 2:
-    hlt
+    movl $saved_command_line,%edi
+	movl $(COMMAND_LINE_SIZE/4),%ecx
+	rep
+	movsl
 1:
 checkCPUtype:
     movl $-1, X86_CPUID     #  -1 for no CPUID initially

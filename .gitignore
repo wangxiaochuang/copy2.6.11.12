@@ -12,6 +12,7 @@ vmlinux
 *.gz
 \.version
 zImage
+vmlinux.debug
 arch/i386/boot/tools/build
 arch/i386/boot/setup
 arch/i386/boot/bootsect
@@ -30,3 +31,4 @@ usr/initramfs_data.cpio.gz
 usr/initramfs_list
 include/linux/compile.h
 include/asm-i386/asm_offsets.h
+

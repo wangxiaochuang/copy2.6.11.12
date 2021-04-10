@@ -170,6 +170,7 @@ KERNELRELEASE=$(VERSION).$(PATCHLEVEL).$(SUBLEVEL)$(EXTRAVERSION)$(LOCALVERSION)
 SUBARCH := $(shell uname -m | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
 				  -e s/arm.*/arm/ -e s/sa110/arm/ \
 				  -e s/s390x/s390/ -e s/parisc64/parisc/ )
+SUBARCH = i386
 
 # Cross compiling and selecting different set of gcc/bin-utils
 # ---------------------------------------------------------------------------
@@ -352,7 +353,10 @@ CPPFLAGS        := -D__KERNEL__ $(LINUXINCLUDE)
 
 CFLAGS 		:= -Wall -Wstrict-prototypes -Wno-trigraphs \
 	  	   -fno-strict-aliasing -fno-common \
-		   -ffreestanding
+		   -ffreestanding \
+                   -Wno-unused-variable \
+		   -Wno-unused-function \
+		   -Wno-unused-but-set-variable
 AFLAGS		:= -D__ASSEMBLY__
 
 export	VERSION PATCHLEVEL SUBLEVEL EXTRAVERSION LOCALVERSION KERNELRELEASE \
@@ -509,7 +513,7 @@ all: vmlinux
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 CFLAGS		+= -Os
 else
-CFLAGS		+= -O2
+CFLAGS		+= -O0
 endif
 
 #Add align options if CONFIG_CC_* is not equal to 0
@@ -727,6 +731,30 @@ endif # ifdef CONFIG_KALLSYMS
 # vmlinux image - including updated kernel symbols
 vmlinux: $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) $(kallsyms.o) FORCE
 	$(call if_changed_rule,vmlinux__)
+	rm -f vmlinux.debug
+	objcopy --only-keep-debug vmlinux vmlinux.debug
+	strip --strip-debug --strip-unneeded vmlinux
+	objcopy --add-gnu-debuglink="vmlinux.debug" vmlinux
+	chmod -x "vmlinux.debug"
+
+symbol:
+	rm -f vmlinux.debug
+	objcopy --only-keep-debug vmlinux vmlinux.debug
+	strip --strip-debug --strip-unneeded vmlinux
+	objcopy --add-gnu-debuglink="vmlinux.debug" vmlinux
+	chmod -x "vmlinux.debug"
+
+.PHONY: qemu bochs kill gdb
+qemu:
+	qemu-system-i386 -s -S -drive format=raw,file=../myfd.img,index=0,if=floppy -boot a -curses
+kill:
+	killall qemu-system-i386
+bochs:
+	bochs -qf debug/bochs.cnf
+gdb:
+	gdb -x debug/gdbinit
+	ps -ef |grep 'qemu-system-i386' |grep -v grep |awk '{print $$2}' |xargs kill
+
 
 # The actual objects are generated when descending, 
 # make sure no implicit rule kicks in

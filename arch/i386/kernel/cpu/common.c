@@ -107,6 +107,10 @@ void __init generic_identify(struct cpuinfo_x86 * c) {
     
 }
 
+void __init identify_cpu(struct cpuinfo_x86 *c) {
+    
+}
+
 extern int intel_cpu_init(void);
 extern int cyrix_init_cpu(void);
 extern int nsc_init_cpu(void);

@@ -43,6 +43,9 @@
 enum system_states system_state;
 EXPORT_SYMBOL(system_state);
 
+/* Untouched command line (eg. for /proc) saved by arch-specific code. */
+char saved_command_line[COMMAND_LINE_SIZE];
+
 extern void setup_arch(char **);
 
 asmlinkage void __init start_kernel(void) {
@@ -50,7 +53,7 @@ asmlinkage void __init start_kernel(void) {
     extern struct kernel_param __start___param[], __stop__param[];
     lock_kernel();
     page_address_init();
-    printk(linux_banner);
+    printk("%s", linux_banner);
     setup_arch(&command_line);
     for(;;);
 }

@@ -27,8 +27,10 @@ extern unsigned long max_pfn;
  * memory pages (including holes) on the node.
  */
 typedef struct bootmem_data {
+	// 当前pgdat的开始位置，如果只有一个pgdat，那么就是0
 	unsigned long node_boot_start;
 	unsigned long node_low_pfn;
+	// 数组每个元素是4个字节，每一位表示4k（页），一个元素32k
 	void *node_bootmem_map;
 	unsigned long last_offset;
 	unsigned long last_pos;

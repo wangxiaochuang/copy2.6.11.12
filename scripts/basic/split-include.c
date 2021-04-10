@@ -104,7 +104,7 @@ int main(int argc, const char * argv [])
     /* Read config lines. */
     while (fgets(line, buffer_size, fp_config))
     {
-	const signed char * str_config;
+	const char * str_config;
 	int is_same;
 	int itarget;
 
@@ -130,7 +130,7 @@ int main(int argc, const char * argv [])
 	is_same = 0;
 	if ((fp_target = fopen(ptarget, "r")) != NULL)
 	{
-	    fgets(old_line, buffer_size, fp_target);
+	    if (fgets(old_line, buffer_size, fp_target)) {};
 	    if (fclose(fp_target) != 0)
 		ERROR_EXIT(ptarget);
 	    if (!strcmp(line, old_line))

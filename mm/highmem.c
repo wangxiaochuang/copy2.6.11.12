@@ -11,6 +11,7 @@
 #include <asm/tlbflush.h>
 
 #ifdef CONFIG_HIGHMEM
+pte_t * pkmap_page_table;
 #else /* CONFIG_HIGHMEM */
 #endif
 

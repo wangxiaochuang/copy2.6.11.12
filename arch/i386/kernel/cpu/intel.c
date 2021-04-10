@@ -31,7 +31,7 @@ static void __init init_intel(struct cpuinfo_x86 *c) {
 }
 
 static unsigned int intel_size_cache(struct cpuinfo_x86 * c, unsigned int size) {
-    
+    return 0;    
 }
 
 static struct cpu_dev intel_cpu_dev __initdata = {
