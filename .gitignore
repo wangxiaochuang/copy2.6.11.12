@@ -1,5 +1,6 @@
 vmlinux
 .vscode/
+*.tmp
 .tmp_*
 *.a
 *.s
@@ -31,4 +32,3 @@ usr/initramfs_data.cpio.gz
 usr/initramfs_list
 include/linux/compile.h
 include/asm-i386/asm_offsets.h
-

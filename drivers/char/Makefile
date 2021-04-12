@@ -91,7 +91,7 @@ obj-$(CONFIG_HW_CONSOLE)	+= vt.o defkeymap.o
 # obj-$(CONFIG_HANGCHECK_TIMER) += hangcheck-timer.o
 
 # # Files generated that shall be removed upon make clean
-clean-files := consolemap_deftbl.c defkeymap.c qtronixmap.c
+# clean-files := consolemap_deftbl.c defkeymap.c qtronixmap.c
 
 quiet_cmd_conmk = CONMK   $@
       cmd_conmk = scripts/conmakehash $< > $@
