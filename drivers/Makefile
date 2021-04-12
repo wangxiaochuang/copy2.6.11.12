@@ -7,15 +7,15 @@
 
 obj-$(CONFIG_PCI)		+= pci/
 # obj-$(CONFIG_PARISC)		+= parisc/
-# obj-y				+= video/
-# obj-$(CONFIG_ACPI_BOOT)		+= acpi/
+obj-y				+= video/
+obj-$(CONFIG_ACPI_BOOT)		+= acpi/
 # PnP must come after ACPI since it will eventually need to check if acpi
 # was used and do nothing if so
 # obj-$(CONFIG_PNP)		+= pnp/
 
 # char/ comes before serial/ etc so that the VT console is the boot-time
 # default.
-# obj-y				+= char/
+obj-y				+= char/
 
 # i810fb and intelfb depend on char/agp/
 # obj-$(CONFIG_FB_I810)           += video/i810/

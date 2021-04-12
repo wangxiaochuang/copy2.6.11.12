@@ -35,6 +35,13 @@ static int __init mpf_checksum(unsigned char *mp, int len) {
 
 static struct intel_mp_floating *mpf_found;
 
+/*
+ * Scan the memory blocks for an SMP configuration block.
+ */
+void __init get_smp_config (void) {
+	
+}
+
 static int __init smp_scan_config (unsigned long base, unsigned long length) {
 	unsigned long *bp = phys_to_virt(base);
 	struct intel_mp_floating *mpf;

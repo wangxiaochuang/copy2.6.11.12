@@ -42,11 +42,21 @@ struct cpuinfo_x86 boot_cpu_data = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
 unsigned long mmu_cr4_features;
 EXPORT_SYMBOL_GPL(mmu_cr4_features);
 
+#ifdef	CONFIG_ACPI_INTERPRETER
+	int acpi_disabled = 0;
+#else
+#error "CONFIG_ACPI_INTERPRETER"
+#endif
+EXPORT_SYMBOL(acpi_disabled);
+
 /* for MCA, but anyone else can use it if they want */
 unsigned int machine_id;
 unsigned int machine_submodel_id;
 unsigned int BIOS_revision;
 unsigned int mca_pentium_flag;
+
+/* For PCI or other memory-mapped resources */
+unsigned long pci_mem_start = 0x10000000;
 
 /* Boot loader ID as an integer, for the benefit of proc_dointvec */
 int bootloader_type;
@@ -71,7 +81,7 @@ struct e820map e820;
 unsigned char aux_device_present;
 
 extern void early_cpu_init(void);
-
+extern void dmi_scan_machine(void);
 extern int root_mountflags;
 
 unsigned long saved_videomode;
@@ -208,6 +218,71 @@ static struct resource standard_io_resources[] = { {
 	(sizeof standard_io_resources / sizeof standard_io_resources[0])
 
 #define romsignature(x) (*(unsigned short *)(x) == 0xaa55)
+
+static int __init romchecksum(unsigned char *rom, unsigned long length) {
+	unsigned char *p, sum = 0;
+
+	for (p = rom; p < rom + length; p++)
+		sum += *p;
+	return sum == 0;
+}
+
+static void __init probe_roms(void) {
+	unsigned long start, length, upper;
+	unsigned char *rom;
+	int	      i;
+
+	/* video rom */
+	upper = adapter_rom_resources[0].start;	// 0xc8000
+	for (start = video_rom_resource.start; start < upper; start += 2048) {
+		rom = isa_bus_to_virt(start);
+		if (!romsignature(rom))
+			continue;
+
+		video_rom_resource.start = start;
+		length = rom[2] * 512;
+		if (length && romchecksum(rom, length))
+			video_rom_resource.end = start + length - 1;
+
+		request_resource(&iomem_resource, &video_rom_resource);
+		break;
+	}
+
+	start = (video_rom_resource.end + 1 + 2047) & ~2047UL;
+	if (start < upper)
+		start = upper;
+
+	/* system rom */
+	request_resource(&iomem_resource, &system_rom_resource);
+	upper = system_rom_resource.start;
+
+	/* check for extension rom (ignore length byte!) */
+	rom = isa_bus_to_virt(extension_rom_resource.start);	
+	if (romsignature(rom)) {
+		length = extension_rom_resource.end - extension_rom_resource.start + 1;
+		if (romchecksum(rom, length)) {
+			request_resource(&iomem_resource, &extension_rom_resource);
+			upper = extension_rom_resource.start;
+		}
+	}
+
+	/* check for adapter roms on 2k boundaries */
+	for (i = 0; i < ADAPTER_ROM_RESOURCES && start < upper; start += 2048) {
+		rom = isa_bus_to_virt(start);
+		if (!romsignature(rom))
+			continue;
+		length = rom[2] * 512;
+		/* but accept any length that fits if checksum okay */
+		if (!length || start + length > upper || !romchecksum(rom, length))
+			continue;
+
+		adapter_rom_resources[i].start = start;
+		adapter_rom_resources[i].end = start + length - 1;
+		request_resource(&iomem_resource, &adapter_rom_resources[i]);
+
+		start = adapter_rom_resources[i++].end & ~2047UL;
+	}
+}
 
 static void __init add_memory_region(unsigned long long start,
                                   unsigned long long size, int type)
@@ -555,6 +630,84 @@ static unsigned long __init setup_memory(void) {
 	return max_low_pfn;
 }
 
+static void __init legacy_init_iomem_resources(struct resource *code_resource, struct resource *data_resource) {
+	int i;
+
+	probe_roms();
+	for (i = 0; i < e820.nr_map; i++) {
+		struct resource *res;
+		if (e820.map[i].addr + e820.map[i].size > 0x100000000ULL)
+			continue;
+		res = alloc_bootmem_low(sizeof(struct resource));
+		switch (e820.map[i].type) {
+			case E820_RAM:	res->name = "System RAM"; break;
+			case E820_ACPI:	res->name = "ACPI Tables"; break;
+			case E820_NVS:	res->name = "ACPI Non-volatile Storage"; break;
+			default:	res->name = "reserved";
+		}
+		res->start = e820.map[i].addr;
+		res->end = res->start + e820.map[i].size - 1;
+		res->flags = IORESOURCE_MEM | IORESOURCE_BUSY;
+		request_resource(&iomem_resource, res);
+		if (e820.map[i].type == E820_RAM) {
+			/*
+			 *  We don't know which RAM region contains kernel data,
+			 *  so we try it repeatedly and let the resource manager
+			 *  test it.
+			 */
+			request_resource(res, code_resource);
+			request_resource(res, data_resource);
+		}
+	}
+}
+
+/*
+ * Request address space for all standard resources
+ */
+static void __init register_memory(void) {
+	unsigned long gapstart, gapsize;
+	unsigned long long last;
+	int	      i;
+
+	if (efi_enabled)
+		mypanic("efi_enabled");
+	else
+		legacy_init_iomem_resources(&code_resource, &data_resource);
+
+	request_resource(&iomem_resource, &video_ram_resource);
+
+	for (i = 0; i < STANDARD_IO_RESOURCES; i++)
+		request_resource(&ioport_resource, &standard_io_resources[i]);
+
+	/*
+	 * Search for the bigest gap in the low 32 bits of the e820
+	 * memory space.
+	 */
+	last = 0x100000000ull;
+	gapstart = 0x10000000;
+	gapsize = 0x400000;
+	i = e820.nr_map;
+	while (--i >= 0) {
+		unsigned long long start = e820.map[i].addr;
+		unsigned long long end = start + e820.map[i].size;
+
+		if (last > end) {
+			unsigned long gap = last - end;
+
+			if (gap > gapsize) {
+				gapsize = gap;
+				gapstart = end;
+			}
+		}
+		if (start < last)
+			last = start;
+	}
+
+	pci_mem_start = (gapstart + 0xfffff) & ~0xfffff;
+	printk("Allocating PCI resources starting at %08lx (gap: %08lx:%08lx)\n",
+		pci_mem_start, gapstart, gapsize);
+}
+
 void __init alternative_instructions(void) {
 	
 }
@@ -648,10 +801,39 @@ void __init setup_arch(char **cmdline_p) {
 			extern void setup_early_printk(char *);
 
 			setup_early_printk(s);
-			*/
 			printk("early console enabled\n");
+			*/
 		}
 	}
+#endif
+
+	dmi_scan_machine();
+#ifdef CONFIG_X86_GENERICARCH
+#error "CONFIG_X86_GENERICARCH"
+#endif	
+	if (efi_enabled)
+		mypanic("efi_enabled");
+
+	/*
+	 * Parse the ACPI tables for possible boot-time SMP configuration.
+	 */
+	acpi_boot_table_init();
+	acpi_boot_init();
+
+#ifdef CONFIG_X86_LOCAL_APIC
+	if (smp_found_config)
+		get_smp_config();
+#endif
+
+	register_memory();
+
+#ifdef CONFIG_VT
+#if defined(CONFIG_VGA_CONSOLE)
+	if (!efi_enabled || (efi_mem_type(0xa0000) != EFI_CONVENTIONAL_MEMORY))
+		conswitchp = &vga_con;
+#elif defined(CONFIG_DUMMY_CONSOLE)
+	conswitchp = &dummy_con;
+#endif
 #endif
 }
 

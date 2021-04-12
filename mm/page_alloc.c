@@ -35,6 +35,29 @@ static char *zone_names[MAX_NR_ZONES] = { "DMA", "Normal", "HighMem" };
 unsigned long __initdata nr_kernel_pages;
 unsigned long __initdata nr_all_pages;
 
+fastcall unsigned long __get_free_pages(unsigned int gfp_mask, unsigned int order)
+{
+	return 0;
+}
+
+EXPORT_SYMBOL(__get_free_pages);
+
+fastcall void __free_pages(struct page *page, unsigned int order)
+{
+}
+
+EXPORT_SYMBOL(__free_pages);
+
+fastcall void free_pages(unsigned long addr, unsigned int order)
+{
+	if (addr != 0) {
+		BUG_ON(!virt_addr_valid((void *)addr));
+		__free_pages(virt_to_page((void *)addr), order);
+	}
+}
+
+EXPORT_SYMBOL(free_pages);
+
 #define PAGES_PER_WAITQUEUE	256
 
 static inline unsigned long wait_table_size(unsigned long pages) {

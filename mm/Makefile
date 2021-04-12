@@ -6,7 +6,8 @@ mmu-y			:= nommu.o
 # mmu-$(CONFIG_MMU)	:= fremap.o highmem.o madvise.o memory.o mincore.o \
 # 			   mlock.o mmap.o mprotect.o mremap.o msync.o rmap.o \
 # 			   vmalloc.o
-mmu-$(CONFIG_MMU)	:= highmem.o memory.o
+mmu-$(CONFIG_MMU)	:= highmem.o memory.o \
+				vmalloc.o
 
 # obj-y			:= bootmem.o filemap.o mempool.o oom_kill.o fadvise.o \
 #			   page_alloc.o page-writeback.o pdflush.o \
@@ -14,6 +15,7 @@ mmu-$(CONFIG_MMU)	:= highmem.o memory.o
 #			   prio_tree.o $(mmu-y)
 obj-y := bootmem.o \
 		page_alloc.o \
+		slab.o \
 		$(mmu-y)
 
 # obj-$(CONFIG_SWAP)	+= page_io.o swap_state.o swapfile.o thrash.o

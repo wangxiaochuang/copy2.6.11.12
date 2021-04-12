@@ -23,6 +23,8 @@
 /* bitmap of online cpus */
 cpumask_t cpu_online_map;
 
+cpumask_t cpu_callout_map;
+
 extern unsigned char trampoline_data [];
 extern unsigned char trampoline_end  [];
 static unsigned char *trampoline_base;
@@ -47,4 +49,10 @@ void __init initialize_secondary(void) {
 		"jmp *%1"
 		:
 		:"r" (current->thread.esp),"r" (current->thread.eip));
+}
+
+
+void __devinit smp_prepare_boot_cpu(void) {
+	cpu_set(smp_processor_id(), cpu_online_map);
+	cpu_set(smp_processor_id(), cpu_callout_map);
 }

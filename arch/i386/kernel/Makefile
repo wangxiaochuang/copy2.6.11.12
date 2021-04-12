@@ -9,11 +9,12 @@ extra-y := head.o init_task.o vmlinux.lds
 # 		pci-dma.o i386_ksyms.o i387.o dmi_scan.o bootflag.o \
 # 		doublefault.o quirks.o
 obj-y	:= process.o semaphore.o traps.o \
-		time.o setup.o
+		time.o setup.o \
+		dmi_scan.o
 
 obj-y				+= cpu/
 # obj-y				+= timers/
-# obj-$(CONFIG_ACPI_BOOT)		+= acpi/
+obj-$(CONFIG_ACPI_BOOT)		+= acpi/
 # obj-$(CONFIG_X86_BIOS_REBOOT)	+= reboot.o
 # obj-$(CONFIG_MCA)		+= mca.o
 # obj-$(CONFIG_X86_MSR)		+= msr.o
@@ -32,7 +33,7 @@ obj-$(CONFIG_X86_MPPARSE)	+= mpparse.o
 # obj-y				+= sysenter.o vsyscall.o
 # obj-$(CONFIG_ACPI_SRAT) 	+= srat.o
 # obj-$(CONFIG_HPET_TIMER) 	+= time_hpet.o
-# obj-$(CONFIG_EFI) 		+= efi.o efi_stub.o
+obj-$(CONFIG_EFI) 		+= efi.o #efi_stub.o
 # obj-$(CONFIG_EARLY_PRINTK)	+= early_printk.o
 
 EXTRA_AFLAGS   := -traditional

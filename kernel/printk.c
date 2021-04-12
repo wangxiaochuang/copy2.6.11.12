@@ -259,6 +259,11 @@ void release_console_sem(void)
 }
 EXPORT_SYMBOL(release_console_sem);
 
+int printk_ratelimit(void) {
+	return 0;
+}
+EXPORT_SYMBOL(printk_ratelimit);
+
 static void raw_print(const char * b) {
     unsigned char c;
     unsigned char *video = (unsigned char *) 0xb8000 + 24*160;

@@ -9,7 +9,7 @@
 # 	    rcupdate.o intermodule.o extable.o params.o posix-timers.o \
 # 	    kthread.o wait.o kfifo.o sys_ni.o
 obj-y = sched.o exec_domain.o panic.o printk.o \
-		itimer.o \
+		itimer.o resource.o \
 		user.o \
 		signal.o sys.o
 

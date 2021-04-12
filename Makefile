@@ -751,8 +751,14 @@ kill:
 	killall qemu-system-i386
 bochs:
 	bochs -qf debug/bochs.cnf
+
+# tui:
+#   layout ...
+#   info win
+#   fs ...
+#   tui disabled|enabled
 gdb:
-	gdb -x debug/gdbinit
+	gdb -x debug/gdbinit # -tui
 	ps -ef |grep 'qemu-system-i386' |grep -v grep |awk '{print $$2}' |xargs kill
 
 

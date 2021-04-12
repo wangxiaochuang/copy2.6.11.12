@@ -48,6 +48,33 @@ char saved_command_line[COMMAND_LINE_SIZE];
 
 extern void setup_arch(char **);
 
+#ifdef __GENERIC_PER_CPU
+unsigned long __per_cpu_offset[NR_CPUS];
+
+EXPORT_SYMBOL(__per_cpu_offset);
+
+static void __init setup_per_cpu_areas(void) {
+    unsigned long size, i;
+    char *ptr;
+    /* Created by linker magic */
+	extern char __per_cpu_start[], __per_cpu_end[];
+
+    size = ALIGN(__per_cpu_end - __per_cpu_start, SMP_CACHE_BYTES);
+#ifdef CONFIG_MODULES
+    if (size < PERCPU_ENOUGH_ROOM)
+        size = PERCPU_ENOUGH_ROOM;
+#endif
+
+    ptr = alloc_bootmem(size * NR_CPUS);
+
+    for (i = 0; i < NR_CPUS; i++, ptr += size) {
+        __per_cpu_offset[i] = ptr - __per_cpu_start;
+        memcpy(ptr, __per_cpu_start, __per_cpu_end - __per_cpu_start);
+    }
+}
+
+#endif
+
 asmlinkage void __init start_kernel(void) {
     char *command_line;
     extern struct kernel_param __start___param[], __stop__param[];
@@ -55,5 +82,10 @@ asmlinkage void __init start_kernel(void) {
     page_address_init();
     printk("%s", linux_banner);
     setup_arch(&command_line);
+    setup_per_cpu_areas();
+
+    smp_prepare_boot_cpu();
+
+    sched_init();
     for(;;);
 }
