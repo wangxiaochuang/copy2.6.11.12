@@ -188,7 +188,7 @@ fastcall int __down_trylock(struct semaphore * sem)
  * value or just clobbered..
  */
 asm(
-// ".section .sched.text\n"
+".section .sched.text\n"
 ".align 4\n"
 ".globl __down_failed\n"
 "__down_failed:\n\t"
@@ -209,7 +209,7 @@ asm(
 );
 
 asm(
-// ".section .sched.text\n"
+".section .sched.text\n"
 ".align 4\n"
 ".globl __down_failed_interruptible\n"
 "__down_failed_interruptible:\n\t"
@@ -230,7 +230,7 @@ asm(
 );
 
 asm(
-// ".section .sched.text\n"
+".section .sched.text\n"
 ".align 4\n"
 ".globl __down_failed_trylock\n"
 "__down_failed_trylock:\n\t"
@@ -251,7 +251,7 @@ asm(
 );
 
 asm(
-// ".section .sched.text\n"
+".section .sched.text\n"
 ".align 4\n"
 ".globl __up_wakeup\n"
 "__up_wakeup:\n\t"
@@ -268,7 +268,7 @@ asm(
  */
 #if defined(CONFIG_SMP)
 asm(
-// ".section .sched.text\n"
+".section .sched.text\n"
 ".align	4\n"
 ".globl	__write_lock_failed\n"
 "__write_lock_failed:\n\t"
@@ -282,7 +282,7 @@ asm(
 );
 
 asm(
-// ".section .sched.text\n"
+".section .sched.text\n"
 ".align	4\n"
 ".globl	__read_lock_failed\n"
 "__read_lock_failed:\n\t"

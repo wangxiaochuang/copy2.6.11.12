@@ -761,6 +761,12 @@ gdb:
 	gdb -x debug/gdbinit # -tui
 	ps -ef |grep 'qemu-system-i386' |grep -v grep |awk '{print $$2}' |xargs kill
 
+dvmlinux:
+	docker run --rm -v "$(TOPDIR)/../":/usr/src/myapp -w /usr/src/myapp/copy2.6.11.12 i386/gcc:4.9 make vmlinux
+
+dzdisk:
+	docker run --rm -v "$(TOPDIR)/../":/usr/src/myapp -w /usr/src/myapp/copy2.6.11.12 i386/gcc:4.9 make zdisk
+
 
 # The actual objects are generated when descending, 
 # make sure no implicit rule kicks in
