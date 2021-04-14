@@ -24,6 +24,13 @@
 int smp_found_config;
 unsigned int __initdata maxcpus = NR_CPUS;
 
+int nr_ioapics;
+
+unsigned long mp_lapic_addr;
+
+/* Processor that is doing the boot up */
+unsigned int boot_cpu_physical_apicid = -1U;
+
 static int __init mpf_checksum(unsigned char *mp, int len) {
 	int sum = 0;
 

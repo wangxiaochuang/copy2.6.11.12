@@ -189,6 +189,34 @@ void fastcall __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
 	__wake_up_common(q, mode, 1, 0, NULL);
 }
 
+void __devinit init_idle(task_t *idle, int cpu) {
+	runqueue_t *rq = cpu_rq(cpu);
+	unsigned long flags;
+
+	idle->sleep_avg = 0;
+	idle->array = NULL;
+	idle->prio = MAX_PRIO;
+	idle->state = TASK_RUNNING;
+	set_task_cpu(idle, cpu);
+
+	spin_lock_irqsave(&rq->lock, flags);
+	rq->curr = rq->idle = idle;
+	set_tsk_need_resched(idle);
+	spin_unlock_irqrestore(&rq->lock, flags);
+
+#if defined(CONFIG_PREEMPT) && !defined(CONFIG_PREEMPT_BKL)
+#error "CONFIG_PREEMPT"
+#else
+	idle->thread_info->preempt_count = 0;
+#endif
+}
+
+#ifdef CONFIG_SMP
+
+#else
+
+#endif /* CONFIG_SMP */
+
 static struct sched_domain sched_domain_dummy;
 
 void __init sched_init(void)
@@ -196,6 +224,7 @@ void __init sched_init(void)
 	runqueue_t *rq;
 	int i, j, k;
 
+	// 每个cpu的运行队列相关数据结构初始化
 	for (i = 0; i < NR_CPUS; i++) {
 		prio_array_t *array;
 
@@ -223,4 +252,9 @@ void __init sched_init(void)
 			__set_bit(MAX_PRIO, array->bitmap);
 		}
 	}
+
+	atomic_inc(&init_mm.mm_count);
+	enter_lazy_tlb(&init_mm, current);
+
+	init_idle(current, smp_processor_id());
 }

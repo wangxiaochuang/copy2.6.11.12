@@ -11,8 +11,10 @@ unsigned long __lockfunc _spin_lock_irqsave(spinlock_t *lock)
 {
 	unsigned long flags;
 
+	// 保存当前eflags
 	local_irq_save(flags);
 	preempt_disable();
+	// lock->slock减一，如果失败了才会检测flags
 	_raw_spin_lock_flags(lock, flags);
 	return flags;
 }

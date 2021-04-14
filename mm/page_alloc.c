@@ -21,6 +21,7 @@
 #include <asm/tlbflush.h>
 #include "internal.h"
 
+nodemask_t node_online_map = { { [0] = 1UL } };
 struct pglist_data *pgdat_list;
 
 /*
@@ -57,6 +58,81 @@ fastcall void free_pages(unsigned long addr, unsigned int order)
 }
 
 EXPORT_SYMBOL(free_pages);
+
+/*
+ * Builds allocation fallback zone lists.
+ */
+static int __init build_zonelists_node(pg_data_t *pgdat, struct zonelist *zonelist, int j, int k)
+{
+	switch (k) {
+		struct zone *zone;
+	default:
+		BUG();
+	case ZONE_HIGHMEM:
+		zone = pgdat->node_zones + ZONE_HIGHMEM;
+		if (zone->present_pages) {
+#ifndef CONFIG_HIGHMEM
+			BUG();
+#endif
+			zonelist->zones[j++] = zone;
+		}
+	case ZONE_NORMAL:
+		zone = pgdat->node_zones + ZONE_NORMAL;
+		if (zone->present_pages)
+			zonelist->zones[j++] = zone;
+	case ZONE_DMA:
+		zone = pgdat->node_zones + ZONE_DMA;
+		if (zone->present_pages)
+			zonelist->zones[j++] = zone;
+	}
+	return j;
+}
+
+#ifdef CONFIG_NUMA
+#error "CONFIG_NUMA"
+#else /* CONFIG_NUMA */
+static void __init build_zonelists(pg_data_t *pgdat) {
+	int i, j, k, node, local_node;
+
+	local_node = pgdat->node_id;
+
+	for (i = 0; i < GFP_ZONETYPES; i++) {
+		struct zonelist *zonelist;	
+
+		zonelist = pgdat->node_zonelists + i;
+		memset(zonelist, 0, sizeof(*zonelist));
+
+		j = 0;
+		k = ZONE_NORMAL;
+		if (i & __GFP_HIGHMEM)
+			k = ZONE_HIGHMEM;
+		if (i & __GFP_DMA)
+			k = ZONE_DMA;
+
+		j = build_zonelists_node(pgdat, zonelist, j, k);
+
+		for (node = local_node + 1; node < MAX_NUMNODES; node++) {
+			if (!node_online(node))
+				continue;
+			j = build_zonelists_node(NODE_DATA(node), zonelist, j, k);
+		}
+		for (node = 0; node < local_node; node++) {
+			if (!node_online(node))
+				continue;
+			j = build_zonelists_node(NODE_DATA(node), zonelist, j, k);
+		}
+		zonelist->zones[j] = NULL;
+	}
+}
+#endif
+
+void __init build_all_zonelists(void) {
+	int i;
+
+	for_each_online_node(i)
+		build_zonelists(NODE_DATA(i));
+	printk("Built %i zonelists\n", num_online_nodes());
+}
 
 #define PAGES_PER_WAITQUEUE	256
 
@@ -278,3 +354,10 @@ void __init free_area_init(unsigned long *zones_size)
 			__pa(PAGE_OFFSET) >> PAGE_SHIFT, NULL);
 }
 #endif
+
+
+
+void __init page_alloc_init(void)
+{
+	hotcpu_notifier(page_alloc_cpu_notify, 0);
+}

@@ -8,7 +8,7 @@
 # 	 bitmap.o extable.o kobject_uevent.o prio_tree.o
 lib-y := ctype.o string.o vsprintf.o \
 	dump_stack.o \
-	bitmap.o
+	bitmap.o extable.o
 
 # ifeq ($(CONFIG_DEBUG_KOBJECT),y)
 # CFLAGS_kobject.o += -DDEBUG

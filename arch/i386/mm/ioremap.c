@@ -116,6 +116,13 @@ void __iomem * __ioremap(unsigned long phys_addr, unsigned long size, unsigned l
 	return (void __iomem *) (offset + (char __iomem *) addr);
 }
 
+void iounmap(volatile void __iomem *addr) {
+	struct vm_struct *p;
+	if ((void __force *) addr <= high_memory)
+		return;
+	// @todo
+}
+
 void __init *bt_ioremap(unsigned long phys_addr, unsigned long size)
 {
 	unsigned long offset, last_addr;

@@ -107,3 +107,17 @@ void dump_stack(void) {
 }
 
 EXPORT_SYMBOL(dump_stack);
+
+void __init trap_init(void) {
+#ifdef CONFIG_EISA
+	void __iomem *p = ioremap(0x0FFFD9, 4);
+	if (readl(p) == 'E'+('I'<<8)+('S'<<16)+('A'<<24)) {
+		EISA_bus = 1;
+	}
+	iounmap(p);
+#endif
+
+#ifdef CONFIG_X86_LOCAL_APIC
+	init_apic_mappings();
+#endif
+}

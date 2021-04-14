@@ -11,7 +11,8 @@
 obj-y = sched.o exec_domain.o panic.o printk.o \
 		itimer.o resource.o \
 		user.o \
-		signal.o sys.o
+		signal.o sys.o \
+		extable.o params.o
 
 # obj-$(CONFIG_FUTEX) += futex.o
 # obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
