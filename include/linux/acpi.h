@@ -411,17 +411,7 @@ extern int sbf_port ;
 
 #else	/*!CONFIG_ACPI_BOOT*/
 
-#define acpi_mp_config	0
-
-static inline int acpi_boot_init(void)
-{
-	return 0;
-}
-
-static inline int acpi_boot_table_init(void)
-{
-	return 0;
-}
+#error "!CONFIG_ACPI_BOOT"
 
 #endif 	/*!CONFIG_ACPI_BOOT*/
 

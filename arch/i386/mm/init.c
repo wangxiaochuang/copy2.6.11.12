@@ -235,6 +235,27 @@ static void __init pagetable_init (void) {
     permanent_kmaps_init(pgd_base);
 }
 
+static int disable_nx __initdata = 0;
+u64 __supported_pte_mask = ~_PAGE_NX;
+
+/*
+ * noexec = on|off
+ *
+ * Control non executable mappings.
+ *
+ * on      Enable
+ * off     Disable
+ */
+void __init noexec_setup(const char *str) {
+    if (!strncmp(str, "on",2) && cpu_has_nx) {
+		__supported_pte_mask |= _PAGE_NX;
+		disable_nx = 0;
+	} else if (!strncmp(str,"off",3)) {
+		disable_nx = 1;
+		__supported_pte_mask &= ~_PAGE_NX;
+	}
+}
+
 void __init paging_init(void) {
 #ifdef CONFIG_X86_PAE
 #error "CONFIG_X86_PAE"

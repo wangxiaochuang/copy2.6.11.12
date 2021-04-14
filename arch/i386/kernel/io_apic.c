@@ -1,0 +1,1 @@
+int skip_ioapic_setup;

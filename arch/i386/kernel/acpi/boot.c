@@ -34,6 +34,12 @@ int acpi_pci_disabled __initdata = 1;
 #endif
 int acpi_ht __initdata = 1;	/* enable HT */
 
+int acpi_strict;
+EXPORT_SYMBOL(acpi_strict);
+
+acpi_interrupt_flags acpi_sci_flags __initdata;
+int acpi_skip_timer_override __initdata;
+
 int __init acpi_boot_table_init(void) {
 	int error;
 

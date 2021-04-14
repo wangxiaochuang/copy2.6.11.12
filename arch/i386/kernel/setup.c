@@ -29,6 +29,8 @@
 
 unsigned long init_pg_tables_end __initdata = ~0UL;
 
+int disable_pse __initdata = 0;
+
 #ifdef CONFIG_EFI
 int efi_enabled = 0;
 EXPORT_SYMBOL(efi_enabled);
@@ -48,6 +50,11 @@ EXPORT_SYMBOL_GPL(mmu_cr4_features);
 #error "CONFIG_ACPI_INTERPRETER"
 #endif
 EXPORT_SYMBOL(acpi_disabled);
+
+#ifdef	CONFIG_ACPI_BOOT
+int __initdata acpi_force = 0;
+extern acpi_interrupt_flags	acpi_sci_flags;
+#endif
 
 /* for MCA, but anyone else can use it if they want */
 unsigned int machine_id;
@@ -284,6 +291,22 @@ static void __init probe_roms(void) {
 	}
 }
 
+static void __init limit_regions(unsigned long long size) {
+	unsigned long long current_addr = 0;
+	int i;
+	if (efi_enabled) {
+		mypanic("efi_enabled");
+	}
+	for (i = 0; i < e820.nr_map; i++) {
+		if (e820.map[i].type == E820_RAM) {
+			current_addr = e820.map[i].addr + e820.map[i].size;
+			e820.map[i].size -= current_addr-size;
+			e820.nr_map = i + 1;
+			return;
+		}
+	}
+}
+
 static void __init add_memory_region(unsigned long long start,
                                   unsigned long long size, int type)
 {
@@ -472,6 +495,143 @@ static void __init parse_cmdline_early (char ** cmdline_p) {
     for (;;) {
         if (c != ' ')
             goto next_char;
+		/*
+		 * "mem=nopentium" disables the 4MB page tables.
+		 * "mem=XXX[kKmM]" defines a memory region from HIGH_MEM
+		 * to <mem>, overriding the bios size.
+		 * "memmap=XXX[KkmM]@XXX[KkmM]" defines a memory region from
+		 * <start> to <start>+<mem>, overriding the bios size.
+		 *
+		 * HPA tells me bootloaders need to parse mem=, so no new
+		 * option should be mem=  [also see Documentation/i386/boot.txt]
+		 */
+		if (!memcmp(from, "mem=", 4)) {
+			if (to != command_line)
+				to--;
+			if (!memcmp(from+4, "nopentium", 9)) {
+				from += 9+4;
+				clear_bit(X86_FEATURE_PSE, boot_cpu_data.x86_capability);
+				disable_pse= 1;
+			} else {
+				unsigned long long mem_size;
+				mem_size = memparse(from+4, &from);
+				limit_regions(mem_size);
+				userdef = 1;
+			}
+		} else if (!memcmp(from, "memmap=", 7)) {
+			if (to != command_line)
+				to--;
+			if (!memcmp(from+7, "exactmap", 8)) {
+				from += 8+7;
+				e820.nr_map = 0;
+				userdef = 1;
+			} else {
+				unsigned long long start_at, mem_size;
+
+				mem_size = memparse(from+7, &from);
+				if (*from == '@') {
+					start_at = memparse(from+1, &from);
+					add_memory_region(start_at, mem_size, E820_RAM);
+				} else if (*from == '#') {
+					start_at = memparse(from+1, &from);
+					add_memory_region(start_at, mem_size, E820_ACPI);
+				} else if (*from == '$') {
+					start_at = memparse(from+1, &from);
+					add_memory_region(start_at, mem_size, E820_RESERVED);
+				} else {
+					limit_regions(mem_size);
+					userdef = 1;
+				}
+			}
+		} else if (!memcmp(from, "noexec=", 7))
+			noexec_setup(from+7);
+
+#ifdef  CONFIG_X86_SMP
+		/*
+		 * If the BIOS enumerates physical processors before logical,
+		 * maxcpus=N at enumeration-time can be used to disable HT.
+		 */
+		else if (!memcmp(from, "maxcpus=", 8)) {
+			extern unsigned int maxcpus;
+
+			maxcpus = simple_strtoul(from + 8, NULL, 0);
+		}
+#endif
+
+#ifdef CONFIG_ACPI_BOOT
+		/* "acpi=off" disables both ACPI table parsing and interpreter */
+		else if (!memcmp(from, "acpi=off", 8)) {
+			disable_acpi();
+		}
+
+		/* acpi=force to over-ride black-list */
+		else if (!memcmp(from, "acpi=force", 10)) {
+			acpi_force = 1;
+			acpi_ht = 1;
+			acpi_disabled = 0;
+		}
+
+		/* acpi=strict disables out-of-spec workarounds */
+		else if (!memcmp(from, "acpi=strict", 11)) {
+			acpi_strict = 1;
+		}
+
+		/* Limit ACPI just to boot-time to enable HT */
+		else if (!memcmp(from, "acpi=ht", 7)) {
+			if (!acpi_force)
+				disable_acpi();
+			acpi_ht = 1;
+		}
+		
+		/* "pci=noacpi" disable ACPI IRQ routing and PCI scan */
+		else if (!memcmp(from, "pci=noacpi", 10)) {
+			acpi_disable_pci();
+		}
+		/* "acpi=noirq" disables ACPI interrupt routing */
+		else if (!memcmp(from, "acpi=noirq", 10)) {
+			acpi_noirq_set();
+		}
+
+		else if (!memcmp(from, "acpi_sci=edge", 13))
+			acpi_sci_flags.trigger =  1;
+
+		else if (!memcmp(from, "acpi_sci=level", 14))
+			acpi_sci_flags.trigger = 3;
+
+		else if (!memcmp(from, "acpi_sci=high", 13))
+			acpi_sci_flags.polarity = 1;
+
+		else if (!memcmp(from, "acpi_sci=low", 12))
+			acpi_sci_flags.polarity = 3;
+
+#ifdef CONFIG_X86_IO_APIC
+		else if (!memcmp(from, "acpi_skip_timer_override", 24))
+			acpi_skip_timer_override = 1;
+#endif
+
+#ifdef CONFIG_X86_LOCAL_APIC
+		/* disable IO-APIC */
+		else if (!memcmp(from, "noapic", 6))
+			disable_ioapic_setup();
+#endif /* CONFIG_X86_LOCAL_APIC */
+#endif /* CONFIG_ACPI_BOOT */
+
+		/*
+		 * highmem=size forces highmem to be exactly 'size' bytes.
+		 * This works even on boxes that have no highmem otherwise.
+		 * This also works to reduce highmem size on bigger boxes.
+		 */
+		else if (!memcmp(from, "highmem=", 8))
+			highmem_pages = memparse(from+8, &from) >> PAGE_SHIFT;
+
+		/*
+		 * vmalloc=size forces the vmalloc area to be exactly 'size'
+		 * bytes. This can be used to increase (or decrease) the
+		 * vmalloc area - the default is 128m.
+		 */
+		else if (!memcmp(from, "vmalloc=", 8))
+			__VMALLOC_RESERVE = memparse(from+8, &from);
+
     next_char:
         c = *(from++);
         if (!c)
@@ -482,6 +642,10 @@ static void __init parse_cmdline_early (char ** cmdline_p) {
     }
     *to = '\0';
     *cmdline_p = command_line;
+	if (userdef) {
+		printk(KERN_INFO "user-defined physical RAM map:\n");
+		// print_memory_map("user");
+	}
 }
 
 /*

@@ -202,6 +202,7 @@ void __init parse_early_param(void) {
 
 asmlinkage void __init start_kernel(void) {
     char *command_line;
+	strcpy(saved_command_line, "mem=nopentium acpi=off");
     extern struct kernel_param __start___param[], __stop___param[];
     lock_kernel();
     page_address_init();
