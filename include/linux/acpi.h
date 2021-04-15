@@ -481,10 +481,7 @@ extern void acpi_bios_year(char *s);
 
 #else /*!CONFIG_ACPI_INTERPRETER*/
 
-static inline int acpi_blacklisted(void)
-{
-	return 0;
-}
+#error "!CONFIG_ACPI_INTERPRETER"
 
 #endif /*!CONFIG_ACPI_INTERPRETER*/
 

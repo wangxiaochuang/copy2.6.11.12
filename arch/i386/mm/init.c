@@ -124,7 +124,14 @@ static void __init kernel_physical_mapping_init(pgd_t *pgd_base) {
                     set_pmd(pmd, pfn_pmd(pfn, PAGE_KERNEL_LARGE));
                 pfn += PTRS_PER_PTE;
             } else {
-                mypanic("cpu has pse");
+                pte = one_page_table_init(pmd);
+
+                for (pte_ofs = 0; pte_ofs < PTRS_PER_PTE && pfn < max_low_pfn; pte++, pfn++, pte_ofs++) {
+                    if (is_kernel_text(address))
+                        set_pte(pte, pfn_pte(pfn, PAGE_KERNEL_EXEC));
+                    else
+                        set_pte(pte, pfn_pte(pfn, PAGE_KERNEL));
+                }
             }
         }
     }

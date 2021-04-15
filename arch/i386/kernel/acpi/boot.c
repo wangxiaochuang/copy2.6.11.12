@@ -34,11 +34,47 @@ int acpi_pci_disabled __initdata = 1;
 #endif
 int acpi_ht __initdata = 1;	/* enable HT */
 
+int acpi_lapic;
+int acpi_ioapic;
 int acpi_strict;
 EXPORT_SYMBOL(acpi_strict);
 
 acpi_interrupt_flags acpi_sci_flags __initdata;
 int acpi_skip_timer_override __initdata;
+
+static int __init acpi_parse_sbf(unsigned long phys_addr, unsigned long size)
+{
+    return 0;
+}
+
+static unsigned long __init
+acpi_scan_rsdp (
+	unsigned long		start,
+	unsigned long		length) {
+    
+    unsigned long offset = 0;
+    unsigned long sig_len = sizeof("RSD PTR ") - 1;
+
+    for (offset = 0; offset < length; offset += 16) {
+        if (strncmp((char *) (start + offset), "RSD PTR ", sig_len))
+            continue;
+        return start + offset;
+    }
+    return 0;
+}
+
+unsigned long __init acpi_find_rsdp (void) {
+    unsigned long rsdp_phys = 0;
+
+    if (efi_enabled) {
+        mypanic("efi enabled");
+    }
+    rsdp_phys = acpi_scan_rsdp(0, 0x400);
+    if (!rsdp_phys)
+        rsdp_phys = acpi_scan_rsdp(0xE0000, 0xFFFFF);
+
+    return rsdp_phys;
+}
 
 int __init acpi_boot_table_init(void) {
 	int error;
@@ -51,7 +87,21 @@ int __init acpi_boot_table_init(void) {
         disable_acpi();
         return error;
     }
-    // .............. @todo
+
+// #ifdef __i386__
+    check_acpi_pci();
+// #endif
+
+    acpi_table_parse(ACPI_BOOT, acpi_parse_sbf);
+
+    /*
+	 * blacklist may disable ACPI entirely
+	 */
+	error = acpi_blacklisted();
+    if (error) {
+        mypanic("acpi_blacklisted error");
+    }
+
     return 0;
 }
 
