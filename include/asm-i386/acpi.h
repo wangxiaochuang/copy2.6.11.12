@@ -145,9 +145,9 @@ static inline int ioapic_setup_disabled(void)
 }
 
 #else
-static inline void disable_ioapic_setup(void) { }
-static inline void check_acpi_pci(void) { }
-
+// static inline void disable_ioapic_setup(void) { }
+// static inline void check_acpi_pci(void) { }
+#error "CONFIG_X86_IO_APIC"
 #endif
 
 #else	/* CONFIG_ACPI_BOOT */

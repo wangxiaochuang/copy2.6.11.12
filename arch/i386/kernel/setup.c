@@ -784,7 +784,11 @@ static unsigned long __init setup_memory(void) {
 #endif
 #ifdef CONFIG_X86_FIND_SMP_CONFIG
 	/*
-	 * Find and reserve possible boot-time SMP configuration:
+	 * smp_scan_config(0x0,0x400)
+	 * smp_scan_config(639*0x400,0x400)
+	 * smp_scan_config(0xF0000,0x10000)
+	 * smp_scan_config(get_bios_ebda(), 0x400)
+	 * 这几个地方来扫描ACPI的物理地址，如果存在就设置mpf_found为配置的首地址
 	 */
 	find_smp_config();
 #endif

@@ -42,10 +42,46 @@ EXPORT_SYMBOL(acpi_strict);
 acpi_interrupt_flags acpi_sci_flags __initdata;
 int acpi_skip_timer_override __initdata;
 
-static int __init acpi_parse_sbf(unsigned long phys_addr, unsigned long size)
+#ifdef	CONFIG_X86_64
+#error "CONFIG_X86_64"
+#else
+char *__acpi_map_table(unsigned long phys, unsigned long size)
+{
+	unsigned long base, offset, mapped_size;
+	int idx;
+
+    // acpi在8M内直接返回虚拟地址
+    if (phys + size < 8*1024*1024) 
+		return __va(phys);
+    
+    offset = phys & (PAGE_SIZE - 1);
+    mapped_size = PAGE_SIZE - offset;
+    set_fixmap(FIX_ACPI_END, phys);
+    base = fix_to_virt(FIX_ACPI_END);
+
+    /*
+	 * Most cases can be covered by the below.
+	 */
+	idx = FIX_ACPI_END;
+    while (mapped_size < size) {
+        if (--idx < FIX_ACPI_BEGIN)
+            return NULL;
+        phys += PAGE_SIZE;
+        set_fixmap(idx, phys);
+        mapped_size += PAGE_SIZE;
+    }
+    return ((unsigned char *) base + offset);
+}
+#endif
+
+#ifdef CONFIG_PCI_MMCONFIG
+static int __init acpi_parse_mcfg(unsigned long phys_addr, unsigned long size)
 {
     return 0;
 }
+#else
+#define	acpi_parse_mcfg NULL
+#endif /* !CONFIG_PCI_MMCONFIG */
 
 static unsigned long __init
 acpi_scan_rsdp (
@@ -63,6 +99,40 @@ acpi_scan_rsdp (
     return 0;
 }
 
+
+static int __init acpi_parse_sbf(unsigned long phys_addr, unsigned long size)
+{
+    struct acpi_table_sbf *sb;
+
+	if (!phys_addr || !size)
+	return -EINVAL;
+
+	sb = (struct acpi_table_sbf *) __acpi_map_table(phys_addr, size);
+	if (!sb) {
+		printk(KERN_WARNING PREFIX "Unable to map SBF\n");
+		return -ENODEV;
+	}
+
+	sbf_port = sb->sbf_cmos; /* Save CMOS port */
+    return 0;
+}
+
+#ifdef CONFIG_HPET_TIMER
+static int __init acpi_parse_hpet(unsigned long phys, unsigned long size) {
+    mypanic("acpi_parse_hpet");
+    return 0;
+}
+#else
+#define	acpi_parse_hpet	NULL
+#endif
+
+static int __init acpi_parse_fadt(unsigned long phys, unsigned long size) {
+    mypanic("acpi_parse_fadt");
+    return 0;
+}
+
+
+
 unsigned long __init acpi_find_rsdp (void) {
     unsigned long rsdp_phys = 0;
 
@@ -74,6 +144,9 @@ unsigned long __init acpi_find_rsdp (void) {
         rsdp_phys = acpi_scan_rsdp(0xE0000, 0xFFFFF);
 
     return rsdp_phys;
+}
+
+static void __init acpi_process_madt(void) {
 }
 
 int __init acpi_boot_table_init(void) {
@@ -113,5 +186,21 @@ int __init acpi_boot_init(void)
 	 */
 	if (acpi_disabled && !acpi_ht)
 		 return 1;
+
+    acpi_table_parse(ACPI_BOOT, acpi_parse_sbf);
+
+	/*
+	 * set sci_int and PM timer address
+	 */
+	acpi_table_parse(ACPI_FADT, acpi_parse_fadt);
+
+	/*
+	 * Process the Multiple APIC Description Table (MADT), if present
+	 */
+	acpi_process_madt();
+
+	acpi_table_parse(ACPI_HPET, acpi_parse_hpet);
+	acpi_table_parse(ACPI_MCFG, acpi_parse_mcfg);
+
     return 0;
 }

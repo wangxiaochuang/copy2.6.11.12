@@ -10,7 +10,7 @@ extra-y := head.o init_task.o vmlinux.lds
 # 		doublefault.o quirks.o
 obj-y	:= process.o semaphore.o traps.o \
 		time.o setup.o \
-		dmi_scan.o
+		dmi_scan.o bootflag.o
 
 obj-y				+= cpu/
 # obj-y				+= timers/
