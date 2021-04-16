@@ -24,6 +24,9 @@
 int smp_found_config;
 unsigned int __initdata maxcpus = NR_CPUS;
 
+/* I/O APIC entries */
+struct mpc_config_ioapic mp_ioapics[MAX_IO_APICS];
+
 /* MP IRQ source entries */
 int mp_irq_entries;
 
@@ -34,6 +37,9 @@ unsigned long mp_lapic_addr;
 
 /* Internal processor count */
 static unsigned int __initdata num_processors;
+
+/* Bitmask of physically existing CPUs */
+physid_mask_t phys_cpu_present_map;
 
 /* Processor that is doing the boot up */
 unsigned int boot_cpu_physical_apicid = -1U;
@@ -188,3 +194,57 @@ void __init find_smp_config (void) {
     if (address)
         smp_scan_config(address, 0x400);
 }
+
+/* --------------------------------------------------------------------------
+                            ACPI-based MP Configuration
+   -------------------------------------------------------------------------- */
+
+#ifdef CONFIG_ACPI_BOOT
+
+#if defined(CONFIG_X86_IO_APIC) && (defined(CONFIG_ACPI_INTERPRETER) || defined(CONFIG_ACPI_BOOT))
+
+#define MP_ISA_BUS		0
+#define MP_MAX_IOAPIC_PIN	127
+
+struct mp_ioapic_routing {
+	int			apic_id;
+	int			gsi_base;
+	int			gsi_end;
+	u32			pin_programmed[4];
+} mp_ioapic_routing[MAX_IO_APICS];
+
+void __init mp_register_ioapic (
+	u8			id, 
+	u32			address,
+	u32			gsi_base)
+{
+	int			idx = 0;
+
+	if (nr_ioapics >= MAX_IO_APICS) {
+		printk(KERN_ERR "ERROR: Max # of I/O APICs (%d) exceeded "
+			"(found %d)\n", MAX_IO_APICS, nr_ioapics);
+		panic("Recompile kernel with bigger MAX_IO_APICS!\n");
+	}
+	if (!address) {
+		printk(KERN_ERR "WARNING: Bogus (zero) I/O APIC address"
+			" found in MADT table, skipping!\n");
+		return;
+	}
+
+	idx = nr_ioapics++;
+
+	mp_ioapics[idx].mpc_type = MP_IOAPIC;
+	mp_ioapics[idx].mpc_flags = MPC_APIC_USABLE;
+	mp_ioapics[idx].mpc_apicaddr = address;
+
+	set_fixmap_nocache(FIX_IO_APIC_BASE_0 + idx, address);
+	mp_ioapics[idx].mpc_apicid = io_apic_get_unique_id(idx, id);
+	mp_ioapics[idx].mpc_apicver = io_apic_get_version(idx);
+}
+
+void __init mp_config_acpi_legacy_irqs (void)
+{
+}
+
+#endif /*CONFIG_X86_IO_APIC && (CONFIG_ACPI_INTERPRETER || CONFIG_ACPI_BOOT)*/
+#endif /*CONFIG_ACPI_BOOT*/

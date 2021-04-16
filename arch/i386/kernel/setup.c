@@ -984,6 +984,7 @@ void __init setup_arch(char **cmdline_p) {
 
 	/*
 	 * Parse the ACPI tables for possible boot-time SMP configuration.
+	 * ACPI_FADT ACPI_APIC ACPI_HPET
 	 */
 	acpi_boot_table_init();
 	acpi_boot_init();

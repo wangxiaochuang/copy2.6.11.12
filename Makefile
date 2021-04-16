@@ -12,7 +12,7 @@ NAME=Woozy Beaver
 # expect to learn how to build the kernel reading this file.
 
 # Do not print "Entering directory ..."
-MAKEFLAGS += --no-print-directory -r
+MAKEFLAGS += -j 2 --no-print-directory -r
 
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.

@@ -25,6 +25,10 @@
 
 #endif	/* X86 */
 
+#define BAD_MADT_ENTRY(entry, end) (					    \
+		(!entry) || (unsigned long)entry + sizeof(*entry) > end ||  \
+		((acpi_table_entry_header *)entry)->length != sizeof(*entry))
+
 #ifdef CONFIG_ACPI_PCI
 int acpi_noirq __initdata;	/* skip ACPI IRQ initialization */
 int acpi_pci_disabled __initdata; /* skip ACPI PCI scan and IRQ initialization */
@@ -40,7 +44,22 @@ int acpi_strict;
 EXPORT_SYMBOL(acpi_strict);
 
 acpi_interrupt_flags acpi_sci_flags __initdata;
+int acpi_sci_override_gsi __initdata;
 int acpi_skip_timer_override __initdata;
+
+#ifdef CONFIG_X86_LOCAL_APIC
+static u64 acpi_lapic_addr __initdata = APIC_DEFAULT_PHYS_BASE;
+#endif
+
+/* --------------------------------------------------------------------------
+                              Boot-time Configuration
+   -------------------------------------------------------------------------- */
+
+/*
+ * The default interrupt routing model is PIC (8259).  This gets
+ * overriden if IOAPICs are enumerated (below).
+ */
+enum acpi_irq_model_id		acpi_irq_model = ACPI_IRQ_MODEL_PIC;
 
 #ifdef	CONFIG_X86_64
 #error "CONFIG_X86_64"
@@ -83,6 +102,102 @@ static int __init acpi_parse_mcfg(unsigned long phys_addr, unsigned long size)
 #define	acpi_parse_mcfg NULL
 #endif /* !CONFIG_PCI_MMCONFIG */
 
+#ifdef CONFIG_X86_LOCAL_APIC
+static int __init acpi_parse_madt ( unsigned long phys_addr, unsigned long size) {
+	struct acpi_table_madt	*madt = NULL;
+
+	if (!phys_addr || !size)
+		return -EINVAL;
+
+	madt = (struct acpi_table_madt *) __acpi_map_table(phys_addr, size);
+	if (!madt) {
+		printk(KERN_WARNING PREFIX "Unable to map MADT\n");
+		return -ENODEV;
+	}
+
+	if (madt->lapic_address) {
+		acpi_lapic_addr = (u64) madt->lapic_address;
+
+		printk(KERN_DEBUG PREFIX "Local APIC address 0x%08x\n",
+			madt->lapic_address);
+	}
+
+	acpi_madt_oem_check(madt->header.oem_id, madt->header.oem_table_id);
+
+    return 0;
+}
+
+static int __init
+acpi_parse_lapic (
+	acpi_table_entry_header *header, const unsigned long end)
+{
+	return 0;
+}
+
+static int __init
+acpi_parse_lapic_addr_ovr (
+	acpi_table_entry_header *header, const unsigned long end)
+{
+	return 0;
+}
+
+static int __init
+acpi_parse_lapic_nmi (
+	acpi_table_entry_header *header, const unsigned long end)
+{
+	return 0;
+}
+#endif /*CONFIG_X86_LOCAL_APIC*/
+
+#if defined(CONFIG_X86_IO_APIC) && defined(CONFIG_ACPI_INTERPRETER)
+
+static int __init
+acpi_parse_ioapic (
+	acpi_table_entry_header *header, const unsigned long end)
+{
+	struct acpi_table_ioapic *ioapic = NULL;
+
+	ioapic = (struct acpi_table_ioapic*) header;
+
+	if (BAD_MADT_ENTRY(ioapic, end))
+		return -EINVAL;
+ 
+	acpi_table_print_madt_entry(header);
+
+	mp_register_ioapic (
+		ioapic->id,
+		ioapic->address,
+		ioapic->global_irq_base);
+ 
+	return 0;
+}
+
+/*
+ * Parse Interrupt Source Override for the ACPI SCI
+ */
+static void
+acpi_sci_ioapic_setup(u32 gsi, u16 polarity, u16 trigger) {
+}
+
+static int __init
+acpi_parse_int_src_ovr (
+	acpi_table_entry_header *header, const unsigned long end)
+{
+	return 0;
+}
+
+static int __init
+acpi_parse_nmi_src (
+	acpi_table_entry_header *header, const unsigned long end)
+{
+	return 0;
+}
+
+#endif /* CONFIG_X86_IO_APIC */
+
+#ifdef	CONFIG_ACPI_BUS
+#endif /* CONFIG_ACPI_BUS */
+
 static unsigned long __init
 acpi_scan_rsdp (
 	unsigned long		start,
@@ -119,7 +234,34 @@ static int __init acpi_parse_sbf(unsigned long phys_addr, unsigned long size)
 
 #ifdef CONFIG_HPET_TIMER
 static int __init acpi_parse_hpet(unsigned long phys, unsigned long size) {
-    mypanic("acpi_parse_hpet");
+    struct acpi_table_hpet *hpet_tbl;
+
+	if (!phys || !size)
+		return -EINVAL;
+
+	hpet_tbl = (struct acpi_table_hpet *) __acpi_map_table(phys, size);
+	if (!hpet_tbl) {
+		printk(KERN_WARNING PREFIX "Unable to map HPET\n");
+		return -ENODEV;
+	}
+
+    if (hpet_tbl->addr.space_id != ACPI_SPACE_MEM) {
+		printk(KERN_WARNING PREFIX "HPET timers must be located in "
+		       "memory.\n");
+		return -1;
+	}
+
+#ifdef	CONFIG_X86_64
+#error "CONFIG_X86_64"
+#else /* X86 */
+    {
+        extern unsigned long hpet_address;
+
+		hpet_address = hpet_tbl->addr.addrl;
+		printk(KERN_INFO PREFIX "HPET id: %#x base: %#lx\n",
+			hpet_tbl->id, hpet_address);
+    }
+#endif
     return 0;
 }
 #else
@@ -127,7 +269,21 @@ static int __init acpi_parse_hpet(unsigned long phys, unsigned long size) {
 #endif
 
 static int __init acpi_parse_fadt(unsigned long phys, unsigned long size) {
-    mypanic("acpi_parse_fadt");
+    struct fadt_descriptor_rev2 *fadt = NULL;
+
+	fadt = (struct fadt_descriptor_rev2*) __acpi_map_table(phys,size);
+	if(!fadt) {
+		printk(KERN_WARNING PREFIX "Unable to map FADT\n");
+		return 0;
+	}
+#ifdef	CONFIG_ACPI_INTERPRETER
+	/* initialize sci_int early for INT_SRC_OVR MADT parsing */
+	acpi_fadt.sci_int = fadt->sci_int;
+#endif
+
+#ifdef CONFIG_X86_PM_TIMER
+#error "CONFIG_X86_PM_TIMER"
+#endif
     return 0;
 }
 
@@ -146,7 +302,126 @@ unsigned long __init acpi_find_rsdp (void) {
     return rsdp_phys;
 }
 
+#ifdef	CONFIG_X86_LOCAL_APIC
+/*
+ * Parse LAPIC entries in MADT
+ * returns 0 on success, < 0 on error
+ */
+static int __init
+acpi_parse_madt_lapic_entries(void)
+{
+	int count;
+
+	/* 
+	 * Note that the LAPIC address is obtained from the MADT (32-bit value)
+	 * and (optionally) overriden by a LAPIC_ADDR_OVR entry (64-bit value).
+	 */
+
+	count = acpi_table_parse_madt(ACPI_MADT_LAPIC_ADDR_OVR, acpi_parse_lapic_addr_ovr, 0);
+	if (count < 0) {
+		printk(KERN_ERR PREFIX "Error parsing LAPIC address override entry\n");
+		return count;
+	}
+
+    return 0;
+}
+#endif /* CONFIG_X86_LOCAL_APIC */
+
+#if defined(CONFIG_X86_IO_APIC) && defined(CONFIG_ACPI_INTERPRETER)
+/*
+ * Parse IOAPIC related entries in MADT
+ * returns 0 on success, < 0 on error
+ */
+static int __init
+acpi_parse_madt_ioapic_entries(void)
+{
+	int count;
+
+	if (acpi_disabled || acpi_noirq) {
+		return -ENODEV;
+	}
+
+	/*
+ 	 * if "noapic" boot option, don't look for IO-APICs
+	 */
+	if (skip_ioapic_setup) {
+		printk(KERN_INFO PREFIX "Skipping IOAPIC probe "
+			"due to 'noapic' option.\n");
+		return -ENODEV;
+	}
+
+	count = acpi_table_parse_madt(ACPI_MADT_IOAPIC, acpi_parse_ioapic, MAX_IO_APICS);
+	if (!count) {
+		printk(KERN_ERR PREFIX "No IOAPIC entries present\n");
+		return -ENODEV;
+	} else if (count < 0) {
+		printk(KERN_ERR PREFIX "Error parsing IOAPIC entry\n");
+		return count;
+	}
+
+	count = acpi_table_parse_madt(ACPI_MADT_INT_SRC_OVR, acpi_parse_int_src_ovr, NR_IRQ_VECTORS);
+	if (count < 0) {
+		printk(KERN_ERR PREFIX "Error parsing interrupt source overrides entry\n");
+		/* TBD: Cleanup to allow fallback to MPS */
+		return count;
+	}
+
+	/*
+	 * If BIOS did not supply an INT_SRC_OVR for the SCI
+	 * pretend we got one so we can set the SCI flags.
+	 */
+	if (!acpi_sci_override_gsi)
+		acpi_sci_ioapic_setup(acpi_fadt.sci_int, 0, 0);
+
+	/* Fill in identity legacy mapings where no override */
+	mp_config_acpi_legacy_irqs();
+
+	count = acpi_table_parse_madt(ACPI_MADT_NMI_SRC, acpi_parse_nmi_src, NR_IRQ_VECTORS);
+	if (count < 0) {
+		printk(KERN_ERR PREFIX "Error parsing NMI SRC entry\n");
+		/* TBD: Cleanup to allow fallback to MPS */
+		return count;
+	}
+    return 0;
+}
+#endif
+
 static void __init acpi_process_madt(void) {
+#ifdef CONFIG_X86_LOCAL_APIC
+    int count, error;
+
+	count = acpi_table_parse(ACPI_APIC, acpi_parse_madt);
+	if (count >= 1) {
+        /*
+		 * Parse MADT LAPIC entries
+		 */
+		error = acpi_parse_madt_lapic_entries();
+		if (!error) {
+			acpi_lapic = 1;
+
+			/*
+			 * Parse MADT IO-APIC entries
+			 */
+			error = acpi_parse_madt_ioapic_entries();
+			if (!error) {
+				acpi_irq_model = ACPI_IRQ_MODEL_IOAPIC;
+				acpi_irq_balance_set(NULL);
+				acpi_ioapic = 1;
+
+				smp_found_config = 1;
+				clustered_apic_check();
+			}
+		}
+		if (error == -EINVAL) {
+			/*
+			 * Dell Precision Workstation 410, 610 come here.
+			 */
+			printk(KERN_ERR PREFIX "Invalid BIOS MADT, disabling ACPI\n");
+			disable_acpi();
+		}
+    }
+#endif
+    return;
 }
 
 int __init acpi_boot_table_init(void) {
@@ -187,6 +462,7 @@ int __init acpi_boot_init(void)
 	if (acpi_disabled && !acpi_ht)
 		 return 1;
 
+	// qemu 没有BOOT
     acpi_table_parse(ACPI_BOOT, acpi_parse_sbf);
 
 	/*
