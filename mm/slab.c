@@ -19,8 +19,16 @@
 #include	<asm/tlbflush.h>
 #include	<asm/page.h>
 
+// p 502
+#define	GET_PAGE_CACHE(pg)    ((kmem_cache_t *)(pg)->lru.next) 
+
+static inline void __cache_free (kmem_cache_t *cachep, void* objp)
+{
+
+}
+
 void * kmem_cache_alloc (kmem_cache_t *cachep, int flags) {
-    return NULL;
+	return NULL;
 }
 
 EXPORT_SYMBOL(kmem_cache_alloc);
@@ -32,7 +40,16 @@ void * __kmalloc (size_t size, int flags) {
 EXPORT_SYMBOL(__kmalloc);
 
 void kfree (const void *objp) {
+    kmem_cache_t *c;
+	unsigned long flags;
 
+	if (!objp)
+		return;
+	local_irq_save(flags);
+	// kfree_debugcheck(objp);
+	c = GET_PAGE_CACHE(virt_to_page(objp));
+	__cache_free(c, (void*)objp);
+	local_irq_restore(flags);
 }
 
 EXPORT_SYMBOL(kfree);

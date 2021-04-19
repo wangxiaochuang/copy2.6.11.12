@@ -8,12 +8,13 @@ extra-y := head.o init_task.o vmlinux.lds
 # 		ptrace.o time.o ioport.o ldt.o setup.o i8259.o sys_i386.o \
 # 		pci-dma.o i386_ksyms.o i387.o dmi_scan.o bootflag.o \
 # 		doublefault.o quirks.o
-obj-y	:= process.o semaphore.o traps.o \
-		time.o setup.o \
-		dmi_scan.o bootflag.o
+obj-y	:= process.o semaphore.o signal.o entry.o traps.o irq.o vm86.o \
+		ptrace.o time.o setup.o i8259.o \
+		i387.o dmi_scan.o bootflag.o \
+		doublefault.o
 
 obj-y				+= cpu/
-# obj-y				+= timers/
+obj-y				+= timers/
 obj-$(CONFIG_ACPI_BOOT)		+= acpi/
 # obj-$(CONFIG_X86_BIOS_REBOOT)	+= reboot.o
 # obj-$(CONFIG_MCA)		+= mca.o

@@ -33,5 +33,17 @@
 
 #include "console_macros.h"
 
-
 const struct consw *conswitchp;
+
+/*
+ * This routine initializes console interrupts, and does nothing
+ * else. If you want the screen to clear, call tty_write with
+ * the appropriate escape-sequence.
+ */
+
+static int __init con_init(void) {
+	const char *display_desc = NULL;
+	unsigned int currcons = 0;
+}
+
+console_initcall(con_init);

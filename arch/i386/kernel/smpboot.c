@@ -25,6 +25,9 @@ cpumask_t cpu_online_map;
 
 cpumask_t cpu_callout_map;
 
+/* Per CPU bogomips and other parameters */
+struct cpuinfo_x86 cpu_data[NR_CPUS] __cacheline_aligned;
+
 extern unsigned char trampoline_data [];
 extern unsigned char trampoline_end  [];
 static unsigned char *trampoline_base;
@@ -55,4 +58,24 @@ void __init initialize_secondary(void) {
 void __devinit smp_prepare_boot_cpu(void) {
 	cpu_set(smp_processor_id(), cpu_online_map);
 	cpu_set(smp_processor_id(), cpu_callout_map);
+}
+
+void __init smp_intr_init(void) {
+	/*
+	 * IRQ0 must be given a fixed assignment and initialized,
+	 * because it's used before the IO-APIC is set up.
+	 */
+	set_intr_gate(FIRST_DEVICE_VECTOR, interrupt[0]);
+
+	/*
+	 * The reschedule interrupt is a CPU-to-CPU reschedule-helper
+	 * IPI, driven by wakeup.
+	 */
+	set_intr_gate(RESCHEDULE_VECTOR, reschedule_interrupt);
+
+	/* IPI for invalidation */
+	set_intr_gate(INVALIDATE_TLB_VECTOR, invalidate_interrupt);
+
+	/* IPI for generic function call */
+	set_intr_gate(CALL_FUNCTION_VECTOR, call_function_interrupt);
 }

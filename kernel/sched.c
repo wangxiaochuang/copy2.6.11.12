@@ -134,6 +134,15 @@ static DEFINE_PER_CPU(struct runqueue, runqueues);
 #define cpu_rq(cpu)		(&per_cpu(runqueues, (cpu)))
 #define this_rq()		(&__get_cpu_var(runqueues))
 
+/**
+ * schedule_tail - first thing a freshly forked thread must call.
+ * @prev: the thread we just switched away from.
+ */
+asmlinkage void schedule_tail(task_t *prev)
+	__releases(rq->lock)
+{
+}
+
 asmlinkage void __sched schedule(void) {
 	
 }
@@ -141,6 +150,12 @@ asmlinkage void __sched schedule(void) {
 static int try_to_wake_up(task_t * p, unsigned int state, int sync)
 {
 	return 1;
+}
+
+int fastcall wake_up_process(task_t * p)
+{
+	return try_to_wake_up(p, TASK_STOPPED | TASK_TRACED |
+				 TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE, 0);
 }
 
 #ifdef CONFIG_PREEMPT
@@ -210,6 +225,15 @@ void __devinit init_idle(task_t *idle, int cpu) {
 	idle->thread_info->preempt_count = 0;
 #endif
 }
+
+/*
+ * In a system that switches off the HZ timer nohz_cpu_mask
+ * indicates which cpus entered this state. This is used
+ * in the rcu update to wait only for active cpus. For system
+ * which do not switch off the HZ timer nohz_cpu_mask should
+ * always be CPU_MASK_NONE.
+ */
+cpumask_t nohz_cpu_mask = CPU_MASK_NONE;
 
 #ifdef CONFIG_SMP
 

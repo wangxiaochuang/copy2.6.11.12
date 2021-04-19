@@ -40,6 +40,34 @@
 #include <asm/bugs.h>
 #include <asm/setup.h>
 
+static int init(void *);
+
+extern void init_IRQ(void);
+extern void sock_init(void);
+extern void fork_init(unsigned long);
+extern void mca_init(void);
+extern void sbus_init(void);
+extern void sysctl_init(void);
+extern void signals_init(void);
+extern void buffer_init(void);
+extern void pidhash_init(void);
+extern void pidmap_init(void);
+extern void prio_tree_init(void);
+extern void radix_tree_init(void);
+extern void free_initmem(void);
+extern void populate_rootfs(void);
+extern void driver_init(void);
+extern void prepare_namespace(void);
+#ifdef	CONFIG_ACPI
+extern void acpi_early_init(void);
+#else
+static inline void acpi_early_init(void) { }
+#endif
+
+#ifdef CONFIG_TC
+extern void tc_init(void);
+#endif
+
 enum system_states system_state;
 EXPORT_SYMBOL(system_state);
 
@@ -48,6 +76,11 @@ EXPORT_SYMBOL(system_state);
  */
 #define MAX_INIT_ARGS 32
 #define MAX_INIT_ENVS 32
+
+extern void time_init(void);
+/* Default late time init is NULL. archs can override this later. */
+void (*late_time_init)(void);
+extern void softirq_init(void);
 
 /* Untouched command line (eg. for /proc) saved by arch-specific code. */
 char saved_command_line[COMMAND_LINE_SIZE];
@@ -224,5 +257,18 @@ asmlinkage void __init start_kernel(void) {
 		   &unknown_bootoption);
     sort_main_extable();
     trap_init();
+	rcu_init();
+	init_IRQ();
+	pidhash_init();
+	init_timers();
+	softirq_init();
+	time_init();
+
+	/*
+	 * HACK ALERT! This is early. We're enabling the console before
+	 * we've done PCI setups etc, and console_init() must be aware of
+	 * this. But we do want output early, in case something goes wrong.
+	 */
+	console_init();
     for(;;);
 }

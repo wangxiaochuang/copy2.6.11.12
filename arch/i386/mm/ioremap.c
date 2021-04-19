@@ -118,9 +118,22 @@ void __iomem * __ioremap(unsigned long phys_addr, unsigned long size, unsigned l
 
 void iounmap(volatile void __iomem *addr) {
 	struct vm_struct *p;
-	if ((void __force *) addr <= high_memory)
+	if ((void __force *) addr <= high_memory) 
+		return; 
+	p = remove_vm_area((void *) (PAGE_MASK & (unsigned long __force) addr));
+	if (!p) { 
+		printk("__iounmap: bad address %p\n", addr);
 		return;
-	// @todo
+	}
+
+	if ((p->flags >> 20) && p->phys_addr < virt_to_phys(high_memory) - 1) {
+		/* p->size includes the guard page, but cpa doesn't like that */
+		change_page_attr(virt_to_page(__va(p->phys_addr)),
+				 (p->size - PAGE_SIZE) >> PAGE_SHIFT,
+				 PAGE_KERNEL); 				 
+		global_flush_tlb();
+	} 
+	kfree(p);
 }
 
 void __init *bt_ioremap(unsigned long phys_addr, unsigned long size)

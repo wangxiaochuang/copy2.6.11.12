@@ -24,6 +24,9 @@ static DEFINE_SPINLOCK(ioapic_lock);
 
 int skip_ioapic_setup;
 
+/* irq_vectors is indexed by the sum of all RTEs in all I/O APICs. */
+u8 irq_vector[NR_IRQ_VECTORS] = { FIRST_DEVICE_VECTOR , 0 };
+
 /* --------------------------------------------------------------------------
                           ACPI-based IOAPIC Configuration
    -------------------------------------------------------------------------- */

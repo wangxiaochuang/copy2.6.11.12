@@ -28,6 +28,42 @@
  */
 int apic_verbosity;
 
+/*
+ * 'what should we do if we get a hw irq event on an illegal vector'.
+ * each architecture has to answer this themselves.
+ */
+void ack_bad_irq(unsigned int irq)
+{
+	printk("unexpected IRQ trap at vector %02x\n", irq);
+	/*
+	 * Currently unexpected vectors happen only on SMP and APIC.
+	 * We _must_ ack these because every local APIC has only N
+	 * irq slots per priority level, and a 'hanging, unacked' IRQ
+	 * holds up an irq slot - in excessive cases (when multiple
+	 * unexpected vectors occur) that might lock up the APIC
+	 * completely.
+	 */
+	ack_APIC_irq();
+}
+
+void __init apic_intr_init(void)
+{
+#ifdef CONFIG_SMP
+	smp_intr_init();
+#endif
+	/* self generated IPI for local APIC timer */
+	set_intr_gate(LOCAL_TIMER_VECTOR, apic_timer_interrupt);
+
+	/* IPI vectors for APIC spurious and error interrupts */
+	set_intr_gate(SPURIOUS_APIC_VECTOR, spurious_interrupt);
+	set_intr_gate(ERROR_APIC_VECTOR, error_interrupt);
+
+	/* thermal monitor LVT interrupt */
+#ifdef CONFIG_X86_MCE_P4THERMAL
+#error "CONFIG_X86_MCE_P4THERMAL"
+#endif
+}
+
 int get_physical_broadcast(void)
 {
 	unsigned int lvr, version;
@@ -37,6 +73,122 @@ int get_physical_broadcast(void)
 		return 0xff;
 	else
 		return 0xf;
+}
+
+int get_maxlvt(void)
+{
+	unsigned int v, ver, maxlvt;
+
+	v = apic_read(APIC_LVR);
+	ver = GET_APIC_VERSION(v);
+	/* 82489DXs do not report # of LVT entries. */
+	maxlvt = APIC_INTEGRATED(ver) ? GET_APIC_MAXLVT(v) : 2;
+	return maxlvt;
+}
+
+void clear_local_APIC(void) {
+    int maxlvt;
+	unsigned long v;
+
+	maxlvt = get_maxlvt();
+
+	/*
+	 * Masking an LVT entry on a P6 can trigger a local APIC error
+	 * if the vector is zero. Mask LVTERR first to prevent this.
+	 */
+	if (maxlvt >= 3) {
+		v = ERROR_APIC_VECTOR; /* any non-zero vector will do */
+		apic_write_around(APIC_LVTERR, v | APIC_LVT_MASKED);
+	}
+	/*
+	 * Careful: we have to set masks only first to deassert
+	 * any level-triggered sources.
+	 */
+	v = apic_read(APIC_LVTT);
+	apic_write_around(APIC_LVTT, v | APIC_LVT_MASKED);
+	v = apic_read(APIC_LVT0);
+	apic_write_around(APIC_LVT0, v | APIC_LVT_MASKED);
+	v = apic_read(APIC_LVT1);
+	apic_write_around(APIC_LVT1, v | APIC_LVT_MASKED);
+	if (maxlvt >= 4) {
+		v = apic_read(APIC_LVTPC);
+		apic_write_around(APIC_LVTPC, v | APIC_LVT_MASKED);
+	}
+
+/* lets not touch this if we didn't frob it */
+#ifdef CONFIG_X86_MCE_P4THERMAL
+	if (maxlvt >= 5) {
+		v = apic_read(APIC_LVTTHMR);
+		apic_write_around(APIC_LVTTHMR, v | APIC_LVT_MASKED);
+	}
+#endif
+	/*
+	 * Clean APIC state for other OSs:
+	 */
+	apic_write_around(APIC_LVTT, APIC_LVT_MASKED);
+	apic_write_around(APIC_LVT0, APIC_LVT_MASKED);
+	apic_write_around(APIC_LVT1, APIC_LVT_MASKED);
+	if (maxlvt >= 3)
+		apic_write_around(APIC_LVTERR, APIC_LVT_MASKED);
+	if (maxlvt >= 4)
+		apic_write_around(APIC_LVTPC, APIC_LVT_MASKED);
+
+#ifdef CONFIG_X86_MCE_P4THERMAL
+	if (maxlvt >= 5)
+		apic_write_around(APIC_LVTTHMR, APIC_LVT_MASKED);
+#endif
+	v = GET_APIC_VERSION(apic_read(APIC_LVR));
+	if (APIC_INTEGRATED(v)) {	/* !82489DX */
+		if (maxlvt > 3)		/* Due to Pentium errata 3AP and 11AP. */
+			apic_write(APIC_ESR, 0);
+		apic_read(APIC_ESR);
+	}
+}
+
+/*
+ * An initial setup of the virtual wire mode.
+ */
+void __init init_bsp_APIC(void) {
+    unsigned long value, ver;
+
+	/*
+	 * Don't do the setup now if we have a SMP BIOS as the
+	 * through-I/O-APIC virtual wire mode might be active.
+	 */
+	if (smp_found_config || !cpu_has_apic)
+		return;
+
+	value = apic_read(APIC_LVR);
+	ver = GET_APIC_VERSION(value);
+
+	/*
+	 * Do not trust the local APIC being empty at bootup.
+	 */
+	clear_local_APIC();
+
+	/*
+	 * Enable APIC.
+	 */
+	value = apic_read(APIC_SPIV);
+	value &= ~APIC_VECTOR_MASK;
+	value |= APIC_SPIV_APIC_ENABLED;
+	
+	/* This bit is reserved on P4/Xeon and should be cleared */
+	if ((boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) && (boot_cpu_data.x86 == 15))
+		value &= ~APIC_SPIV_FOCUS_DISABLED;
+	else
+		value |= APIC_SPIV_FOCUS_DISABLED;
+	value |= SPURIOUS_APIC_VECTOR;
+	apic_write_around(APIC_SPIV, value);
+
+	/*
+	 * Set up the virtual wire mode.
+	 */
+	apic_write_around(APIC_LVT0, APIC_DM_EXTINT);
+	value = APIC_DM_NMI;
+	if (!APIC_INTEGRATED(ver))		/* 82489DX */
+		value |= APIC_LVT_LEVEL_TRIGGER;
+	apic_write_around(APIC_LVT1, value);
 }
 
 static int __init detect_init_APIC (void) {
@@ -65,8 +217,18 @@ void __init init_apic_mappings(void) {
 
         for (i = 0; i < nr_ioapics; i++) {
             if (smp_found_config) {
-
+                ioapic_phys = mp_ioapics[i].mpc_apicaddr;
+                if (!ioapic_phys) {
+					printk(KERN_ERR
+					       "WARNING: bogus zero IO-APIC "
+					       "address found in MPTABLE, "
+					       "disabling IO/APIC support!\n");
+					smp_found_config = 0;
+					skip_ioapic_setup = 1;
+					goto fake_ioapic_page;
+				}
             } else {
+fake_ioapic_page:
                 ioapic_phys = (unsigned long)
                         alloc_bootmem_pages(PAGE_SIZE);
                 ioapic_phys = __pa(ioapic_phys);
@@ -78,4 +240,32 @@ void __init init_apic_mappings(void) {
         }
     }
 #endif
+}
+
+/*
+ * Local APIC timer interrupt. This is the most natural way for doing
+ * local interrupts, but local timer interrupts can be emulated by
+ * broadcast interrupts too. [in case the hw doesn't support APIC timers]
+ *
+ * [ if a single-CPU system runs an SMP kernel then we call the local
+ *   interrupt as well. Thus we cannot inline the local irq ... ]
+ */
+
+fastcall void smp_apic_timer_interrupt(struct pt_regs *regs)
+{
+}
+
+/*
+ * This interrupt should _never_ happen with our APIC/SMP architecture
+ */
+fastcall void smp_spurious_interrupt(struct pt_regs *regs)
+{
+}
+
+/*
+ * This interrupt should never happen with our APIC/SMP architecture
+ */
+
+fastcall void smp_error_interrupt(struct pt_regs *regs)
+{
 }

@@ -165,9 +165,9 @@ static inline void acpi_disable_pci(void)
 }
 extern int acpi_irq_balance_set(char *str);
 #else
-static inline void acpi_noirq_set(void) { }
-static inline void acpi_disable_pci(void) { }
-static inline int acpi_irq_balance_set(char *str) { return 0; }
+// static inline void acpi_noirq_set(void) { }
+// static inline void acpi_disable_pci(void) { }
+// static inline int acpi_irq_balance_set(char *str) { return 0; }
 #endif
 
 #ifdef CONFIG_ACPI_SLEEP

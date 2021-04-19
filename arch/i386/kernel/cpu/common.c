@@ -18,6 +18,9 @@
 
 #include "cpu.h"
 
+DEFINE_PER_CPU(struct desc_struct, cpu_gdt_table[GDT_ENTRIES]);
+EXPORT_PER_CPU_SYMBOL(cpu_gdt_table);
+
 struct cpu_dev * cpu_devs[X86_VENDOR_NUM] = {};
 
 static void default_init(struct cpuinfo_x86 * c) {
@@ -111,6 +114,8 @@ void __init identify_cpu(struct cpuinfo_x86 *c) {
     
 }
 
+cpumask_t cpu_initialized __initdata = CPU_MASK_NONE;
+
 extern int intel_cpu_init(void);
 extern int cyrix_init_cpu(void);
 extern int nsc_init_cpu(void);
@@ -136,4 +141,90 @@ void __init early_cpu_init(void) {
 #ifdef CONFIG_DEBUG_PAGEALLOC
 #error "CONFIG_DEBUG_PAGEALLOC"
 #endif
+}
+
+/*
+ * cpu_init() initializes state that is per-CPU. Some data is already
+ * initialized (naturally) in the bootstrap process, such as the GDT
+ * and IDT. We reload them nevertheless, this function acts as a
+ * 'CPU state barrier', nothing should get across.
+ */
+void __init cpu_init (void)
+{
+    int cpu = smp_processor_id();
+	struct tss_struct * t = &per_cpu(init_tss, cpu);
+	struct thread_struct *thread = &current->thread;
+
+    if (cpu_test_and_set(cpu, cpu_initialized)) {
+		printk(KERN_WARNING "CPU#%d already initialized!\n", cpu);
+		for (;;) local_irq_enable();
+	}
+
+    printk(KERN_INFO "Initializing CPU#%d\n", cpu);
+
+	if (cpu_has_vme || cpu_has_tsc || cpu_has_de)
+		clear_in_cr4(X86_CR4_VME|X86_CR4_PVI|X86_CR4_TSD|X86_CR4_DE);
+    
+    if (tsc_disable && cpu_has_tsc) {
+		printk(KERN_NOTICE "Disabling TSC...\n");
+		/**** FIX-HPA: DOES THIS REALLY BELONG HERE? ****/
+		clear_bit(X86_FEATURE_TSC, boot_cpu_data.x86_capability);
+		set_in_cr4(X86_CR4_TSD);
+	}
+
+    /*
+	 * Initialize the per-CPU GDT with the boot GDT,
+	 * and set up the GDT descriptor:
+	 */
+	memcpy(&per_cpu(cpu_gdt_table, cpu), cpu_gdt_table,
+	       GDT_SIZE);
+    cpu_gdt_descr[cpu].size = GDT_SIZE - 1;
+    cpu_gdt_descr[cpu].address = (unsigned long) &per_cpu(cpu_gdt_table, cpu);
+
+    /*
+	 * Set up the per-thread TLS descriptor cache:
+	 */
+    memcpy(thread->tls_array, &per_cpu(cpu_gdt_table, cpu),
+        GDT_ENTRY_TLS_ENTRIES * 8);
+    
+    __asm__ __volatile__("lgdt %0" : : "m" (cpu_gdt_descr[cpu]));
+	__asm__ __volatile__("lidt %0" : : "m" (idt_descr));
+
+    /*
+	 * Delete NT
+	 */
+	__asm__("pushfl ; andl $0xffffbfff,(%esp) ; popfl");
+
+    /*
+	 * Set up and load the per-CPU TSS and LDT
+	 */
+    atomic_inc(&init_mm.mm_count);
+    current->active_mm = &init_mm;
+    if (current->mm)
+        BUG();
+    enter_lazy_tlb(&init_mm, current);
+
+    load_esp0(t, thread);
+    set_tss_desc(cpu, t);
+    load_TR_desc();
+    load_LDT(&init_mm.context);
+
+    /* Set up doublefault TSS pointer in the GDT */
+	__set_tss_desc(cpu, GDT_ENTRY_DOUBLEFAULT_TSS, &doublefault_tss);
+
+    /* Clear %fs and %gs. */
+	asm volatile ("xorl %eax, %eax; movl %eax, %fs; movl %eax, %gs");    
+
+#define CD(register) __asm__("movl %0,%%db" #register ::"r"(0) );
+
+	CD(0); CD(1); CD(2); CD(3); /* no db4 and db5 */; CD(6); CD(7);
+
+#undef CD
+
+    /*
+	 * Force FPU initialization:
+	 */
+	current_thread_info()->status = 0;
+	clear_used_math();
+	mxcsr_feature_mask_init();
 }

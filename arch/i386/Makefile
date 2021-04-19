@@ -107,7 +107,7 @@ core-y					+= arch/i386/kernel/ \
 					   arch/i386/mm/
 # 					   arch/i386/crypto/
 # drivers-$(CONFIG_MATH_EMULATION)	+= arch/i386/math-emu/
-# drivers-$(CONFIG_PCI)			+= arch/i386/pci/
+drivers-$(CONFIG_PCI)			+= arch/i386/pci/
 # # must be linked after kernel/
 # drivers-$(CONFIG_OPROFILE)		+= arch/i386/oprofile/
 # drivers-$(CONFIG_PM)			+= arch/i386/power/
