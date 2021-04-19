@@ -93,7 +93,118 @@ __setup("no-scroll", no_scroll);
 
 static const char __init *vgacon_startup(void)
 {
-    return NULL;
+	const char *display_desc = NULL;
+	u16 saved1, saved2;
+	volatile u16 *p;
+
+	if (ORIG_VIDEO_ISVGA == VIDEO_TYPE_VLFB) {
+	      no_vga:
+#ifdef CONFIG_DUMMY_CONSOLE
+		conswitchp = &dummy_con;
+		return conswitchp->con_startup();
+#else
+		return NULL;
+#endif
+	}
+
+	/* VGA16 modes are not handled by VGACON */
+	if ((ORIG_VIDEO_MODE == 0x0D) ||	/* 320x200/4 */
+	    (ORIG_VIDEO_MODE == 0x0E) ||	/* 640x200/4 */
+	    (ORIG_VIDEO_MODE == 0x10) ||	/* 640x350/4 */
+	    (ORIG_VIDEO_MODE == 0x12) ||	/* 640x480/4 */
+	    (ORIG_VIDEO_MODE == 0x6A))	/* 800x600/4, 0x6A is very common */
+		goto no_vga;
+
+	vga_video_num_lines = ORIG_VIDEO_LINES;
+	vga_video_num_columns = ORIG_VIDEO_COLS;
+	state.vgabase = NULL;
+
+	if (ORIG_VIDEO_MODE == 7) {
+		mypanic("ORIG_VIDEO_MODE == 7");
+	} else {
+		/* If not, it is color. */
+		vga_can_do_color = 1;
+		vga_vram_base = 0xb8000;
+		vga_video_port_reg = VGA_CRT_IC;
+		vga_video_port_val = VGA_CRT_DC;
+		if ((ORIG_VIDEO_EGA_BX & 0xff) != 0x10) {
+			int i;
+
+			vga_vram_end = 0xc0000;
+			
+			if (!ORIG_VIDEO_ISVGA) {
+				mypanic("ORIG_VIDEO_ISVGA");
+			} else {
+				static struct resource vga_console_resource
+				    = { "vga+", 0x3C0, 0x3DF };
+				vga_video_type = VIDEO_TYPE_VGAC;
+				display_desc = "VGA+";
+				request_resource(&ioport_resource,
+						 &vga_console_resource);
+#ifdef VGA_CAN_DO_64KB
+#error "VGA_CAN_DO_64KB"
+#endif
+				for (i = 0; i < 16; i++) {
+					inb_p(VGA_IS1_RC);
+					outb_p(i, VGA_ATT_W);
+					outb_p(i, VGA_ATT_W);
+				}
+				outb_p(0x20, VGA_ATT_W);
+
+				/*
+				 * Now set the DAC registers back to their
+				 * default values
+				 */
+				for (i = 0; i < 16; i++) {
+					outb_p(color_table[i], VGA_PEL_IW);
+					outb_p(default_red[i], VGA_PEL_D);
+					outb_p(default_grn[i], VGA_PEL_D);
+					outb_p(default_blu[i], VGA_PEL_D);
+				}
+			}
+		} else {
+			mypanic("ORIG_VIDEO_EGA_BX & 0xff = 0x10");
+		}
+	}
+
+	vga_vram_base = VGA_MAP_MEM(vga_vram_base);
+	vga_vram_end = VGA_MAP_MEM(vga_vram_end);
+
+	/*
+	 *      Find out if there is a graphics card present.
+	 *      Are there smarter methods around?
+	 */
+	p = (volatile u16 *) vga_vram_base;
+	saved1 = scr_readw(p);
+	saved2 = scr_readw(p + 1);
+	scr_writew(0xAA55, p);
+	scr_writew(0x55AA, p + 1);
+	if (scr_readw(p) != 0xAA55 || scr_readw(p + 1) != 0x55AA) {
+		scr_writew(saved1, p);
+		scr_writew(saved2, p + 1);
+		goto no_vga;
+	}
+	scr_writew(0x55AA, p);
+	scr_writew(0xAA55, p + 1);
+	if (scr_readw(p) != 0x55AA || scr_readw(p + 1) != 0xAA55) {
+		scr_writew(saved1, p);
+		scr_writew(saved2, p + 1);
+		goto no_vga;
+	}
+	scr_writew(saved1, p);
+	scr_writew(saved2, p + 1);
+
+	if (vga_video_type == VIDEO_TYPE_EGAC
+	    || vga_video_type == VIDEO_TYPE_VGAC
+	    || vga_video_type == VIDEO_TYPE_EGAM) {
+		vga_hardscroll_enabled = vga_hardscroll_user_enable;
+		vga_default_font_height = ORIG_VIDEO_POINTS;
+		vga_video_font_height = ORIG_VIDEO_POINTS;
+		/* This may be suboptimal but is a safe bet - go with it */
+		vga_scan_lines =
+		    vga_video_font_height * vga_video_num_lines;
+	}
+	return display_desc;
 }
 
 static void vgacon_init(struct vc_data *c, int init) {

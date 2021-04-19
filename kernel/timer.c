@@ -49,6 +49,151 @@ struct tvec_t_base_s {
 
 typedef struct tvec_t_base_s tvec_base_t;
 
+/* Fake initialization */
+static DEFINE_PER_CPU(tvec_base_t, tvec_bases) = { SPIN_LOCK_UNLOCKED };
+
+static void check_timer_failed(struct timer_list *timer) {
+	static int whine_count;
+	if (whine_count < 16) {
+		whine_count++;
+		printk("Uninitialised timer!\n");
+		printk("This is just a warning.  Your computer is OK\n");
+		printk("function=0x%p, data=0x%lx\n",
+			timer->function, timer->data);
+		dump_stack();
+	}
+	/*
+	 * Now fix it up
+	 */
+	spin_lock_init(&timer->lock);
+	timer->magic = TIMER_MAGIC;
+}
+
+static inline void check_timer(struct timer_list *timer)
+{
+	if (timer->magic != TIMER_MAGIC)
+		check_timer_failed(timer);
+}
+
+static void internal_add_timer(tvec_base_t *base, struct timer_list *timer)
+{
+	unsigned long expires = timer->expires;
+	unsigned long idx = expires - base->timer_jiffies;
+	struct list_head *vec;
+
+	if (idx < TVR_SIZE) {
+		int i = expires & TVR_MASK;
+		vec = base->tv1.vec + i;
+	} else if (idx < 1 << (TVR_BITS + TVN_BITS)) {
+		int i = (expires >> TVR_BITS) & TVN_MASK;
+		vec = base->tv2.vec + i;
+	} else if (idx < 1 << (TVR_BITS + 2 * TVN_BITS)) {
+		int i = (expires >> (TVR_BITS + TVN_BITS)) & TVN_MASK;
+		vec = base->tv3.vec + i;
+	} else if (idx < 1 << (TVR_BITS + 3 * TVN_BITS)) {
+		int i = (expires >> (TVR_BITS + 2 * TVN_BITS)) & TVN_MASK;
+		vec = base->tv4.vec + i;
+	} else if ((signed long) idx < 0) {
+		/*
+		 * Can happen if you add a timer with expires == jiffies,
+		 * or you set a timer to go off in the past
+		 */
+		vec = base->tv1.vec + (base->timer_jiffies & TVR_MASK);
+	} else {
+		int i;
+		/* If the timeout is larger than 0xffffffff on 64-bit
+		 * architectures then we use the maximum timeout:
+		 */
+		if (idx > 0xffffffffUL) {
+			idx = 0xffffffffUL;
+			expires = idx + base->timer_jiffies;
+		}
+		i = (expires >> (TVR_BITS + 3 * TVN_BITS)) & TVN_MASK;
+		vec = base->tv5.vec + i;
+	}
+	/*
+	 * Timers are FIFO:
+	 */
+	list_add_tail(&timer->entry, vec);
+}
+
+int __mod_timer(struct timer_list *timer, unsigned long expires)
+{
+	tvec_base_t *old_base, *new_base;
+	unsigned long flags;
+	int ret = 0;
+
+	BUG_ON(!timer->function);
+
+	check_timer(timer);
+
+	spin_lock_irqsave(&timer->lock, flags);
+	new_base = &__get_cpu_var(tvec_bases);
+repeat:
+	old_base = timer->base;
+
+	/*
+	 * Prevent deadlocks via ordering by old_base < new_base.
+	 */
+	if (old_base && (new_base != old_base)) {
+		if (old_base < new_base) {
+			spin_lock(&new_base->lock);
+			spin_lock(&old_base->lock);
+		} else {
+			spin_lock(&old_base->lock);
+			spin_lock(&new_base->lock);
+		}
+		/*
+		 * The timer base might have been cancelled while we were
+		 * trying to take the lock(s):
+		 */
+		if (timer->base != old_base) {
+			spin_unlock(&new_base->lock);
+			spin_unlock(&old_base->lock);
+			goto repeat;
+		}
+	} else {
+		spin_lock(&new_base->lock);
+		if (timer->base != old_base) {
+			spin_unlock(&new_base->lock);
+			goto repeat;
+		}
+	}
+
+	/*
+	 * Delete the previous timeout (if there was any), and install
+	 * the new one:
+	 */
+	if (old_base) {
+		list_del(&timer->entry);
+		ret = 1;
+	}
+	timer->expires = expires;
+	internal_add_timer(new_base, timer);
+	timer->base = new_base;
+
+	if (old_base && (new_base != old_base))
+		spin_unlock(&old_base->lock);
+	spin_unlock(&new_base->lock);
+	spin_unlock_irqrestore(&timer->lock, flags);
+
+	return ret;
+}
+
+EXPORT_SYMBOL(__mod_timer);
+
+int mod_timer(struct timer_list *timer, unsigned long expires)
+{
+	BUG_ON(!timer->function);
+
+	check_timer(timer);
+
+	if (timer->expires == expires && timer_pending(timer))
+		return 1;
+
+	return __mod_timer(timer, expires);
+}
+
 static inline void __run_timers(tvec_base_t *base) {
 
 }

@@ -232,6 +232,22 @@ out:
 EXPORT_SYMBOL(printk);
 EXPORT_SYMBOL(vprintk);
 
+/**
+ * acquire_console_sem - lock the console system for exclusive use.
+ *
+ * Acquires a semaphore which guarantees that the caller has
+ * exclusive access to the console system and the console_drivers list.
+ *
+ * Can sleep, returns nothing.
+ */
+void acquire_console_sem(void) {
+	if (in_interrupt())
+		BUG();
+	down(&console_sem);
+	console_locked = 1;
+	console_may_schedule = 1;
+}
+
 void release_console_sem(void)
 {
 	unsigned long flags;
