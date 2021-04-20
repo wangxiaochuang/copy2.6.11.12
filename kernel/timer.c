@@ -49,6 +49,14 @@ struct tvec_t_base_s {
 
 typedef struct tvec_t_base_s tvec_base_t;
 
+static inline void set_running_timer(tvec_base_t *base,
+					struct timer_list *timer)
+{
+#ifdef CONFIG_SMP
+	base->running_timer = timer;
+#endif
+}
+
 /* Fake initialization */
 static DEFINE_PER_CPU(tvec_base_t, tvec_bases) = { SPIN_LOCK_UNLOCKED };
 
@@ -197,17 +205,6 @@ int mod_timer(struct timer_list *timer, unsigned long expires)
 static inline void __run_timers(tvec_base_t *base) {
 
 }
-
-static inline void set_running_timer(tvec_base_t *base,
-					struct timer_list *timer)
-{
-#ifdef CONFIG_SMP
-	base->running_timer = timer;
-#endif
-}
-
-/* Fake initialization */
-static DEFINE_PER_CPU(tvec_base_t, tvec_bases) = { SPIN_LOCK_UNLOCKED };
 
 /* 
  * The current time 

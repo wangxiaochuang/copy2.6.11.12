@@ -248,6 +248,12 @@ void acquire_console_sem(void) {
 	console_may_schedule = 1;
 }
 
+int is_console_locked(void)
+{
+	return console_locked;
+}
+EXPORT_SYMBOL(is_console_locked);
+
 void release_console_sem(void)
 {
 	unsigned long flags;

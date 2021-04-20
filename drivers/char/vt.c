@@ -105,29 +105,6 @@ enum {
 
 static void visual_init(int currcons, int init)
 {
-    /* ++Geert: sw->con_init determines console size */
-    if (sw)
-	module_put(sw->owner);
-    sw = conswitchp;
-#ifndef VT_SINGLE_DRIVER
-    if (con_driver_map[currcons])
-	sw = con_driver_map[currcons];
-#endif
-    __module_get(sw->owner);
-    cons_num = currcons;
-    display_fg = &master_display_fg;
-    vc_cons[currcons].d->vc_uni_pagedir_loc = &vc_cons[currcons].d->vc_uni_pagedir;
-    vc_cons[currcons].d->vc_uni_pagedir = 0;
-    hi_font_mask = 0;
-    complement_mask = 0;
-    vc_cons[currcons].d->vc_can_do_color = 0;
-    sw->con_init(vc_cons[currcons].d, init);
-    if (!complement_mask)
-        complement_mask =
-		vc_cons[currcons].d->vc_can_do_color ? 0x7700 : 0x0800;
-    s_complement_mask = complement_mask;
-    vc_cons[currcons].d->vc_size_row = vc_cons[currcons].d->vc_cols<<1;
-    screenbuf_size = vc_cons[currcons].d->vc_rows * vc_cons[currcons].d->vc_size_row;
 }
 
 /*
@@ -171,6 +148,12 @@ int default_grn[] = {0x00,0x00,0xaa,0x55,0x00,0x00,0xaa,0xaa,
     0x55,0x55,0xff,0xff,0x55,0x55,0xff,0xff};
 int default_blu[] = {0x00,0x00,0x00,0x00,0xaa,0xaa,0xaa,0xaa,
     0x55,0x55,0x55,0x55,0xff,0xff,0xff,0xff};
+
+static void vc_init(unsigned int currcons, unsigned int rows,
+			unsigned int cols, int do_clear)
+{
+	int j, k ;
+}
 
 /*
  * This routine initializes console interrupts, and does nothing

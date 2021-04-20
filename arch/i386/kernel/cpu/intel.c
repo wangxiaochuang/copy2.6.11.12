@@ -19,6 +19,13 @@
 #include <mach_apic.h>
 #endif
 
+#ifdef CONFIG_X86_INTEL_USERCOPY
+/*
+ * Alignment at which movsl is preferred for bulk memory copies.
+ */
+struct movsl_mask movsl_mask;
+#endif
+
 void __init early_intel_workaround(struct cpuinfo_x86 *c) {
 	if (c->x86_vendor != X86_VENDOR_INTEL)
 		return;
