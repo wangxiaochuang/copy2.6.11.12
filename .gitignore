@@ -12,6 +12,7 @@ vmlinux
 *.bin
 *.gz
 \.version
+asm/
 zImage
 vmlinux.debug
 arch/i386/boot/tools/build
