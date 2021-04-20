@@ -233,10 +233,11 @@ void __init parse_early_param(void) {
 	done = 1;
 }
 
+extern struct kernel_param __start___param[], __stop___param[];
+
 asmlinkage void __init start_kernel(void) {
     char *command_line;
 	strcpy(saved_command_line, "mem=nopentium");
-    extern struct kernel_param __start___param[], __stop___param[];
     lock_kernel();
     page_address_init();
     printk("%s", linux_banner);

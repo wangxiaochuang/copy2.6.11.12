@@ -767,6 +767,9 @@ dvmlinux:
 dzdisk:
 	docker run --rm -v "$(TOPDIR)/../":/usr/src/myapp -w /usr/src/myapp/copy2.6.11.12 i386/gcc:4.9 make zdisk
 
+dconfig:
+	docker run --rm -v "$(TOPDIR)/../":/usr/src/myapp -w /usr/src/myapp/copy2.6.11.12 i386/gcc:4.9 make config
+
 
 # The actual objects are generated when descending, 
 # make sure no implicit rule kicks in
