@@ -680,7 +680,26 @@ unsigned long __init find_max_low_pfn(void) {
 
 	max_low_pfn = max_pfn;
 	if (max_low_pfn > MAXMEM_PFN) {
-		mypanic("max_low_pfn > MAXMEM_PFN");
+		if (highmem_pages == -1)
+			highmem_pages = max_pfn - MAXMEM_PFN;
+		if (highmem_pages + MAXMEM_PFN < max_pfn)
+			max_pfn = MAXMEM_PFN + highmem_pages;
+		if (highmem_pages + MAXMEM_PFN > max_pfn) {
+			printk("only %luMB highmem pages available, ignoring highmem size of %uMB.\n", pages_to_mb(max_pfn - MAXMEM_PFN), pages_to_mb(highmem_pages));
+			highmem_pages = 0;
+		}
+		max_low_pfn = MAXMEM_PFN;
+#ifndef CONFIG_HIGHMEM
+#error "!CONFIG_HIGHMEM"
+#else /* !CONFIG_HIGHMEM */
+#ifndef CONFIG_X86_PAE
+		if (max_pfn > MAX_NONPAE_PFN) {
+			max_pfn = MAX_NONPAE_PFN;
+			printk(KERN_WARNING "Warning only 4GB will be used.\n");
+			printk(KERN_WARNING "Use a PAE enabled kernel.\n");
+		}
+#endif /* !CONFIG_X86_PAE */
+#endif /* !CONFIG_HIGHMEM */
 	} else {
 		if (highmem_pages == -1)
 			highmem_pages = 0;
