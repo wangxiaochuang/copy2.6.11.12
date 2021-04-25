@@ -58,7 +58,30 @@ static unsigned long con_start;	/* Index into log_buf: next char to be sent to c
 static unsigned long log_end;	/* Index into log_buf: most-recently-written-char + 1 */
 static unsigned long logged_chars; /* Number of chars produced since last read+clear operation */
 
+/*
+ *	Array of consoles built from command line options (console=)
+ */
+struct console_cmdline
+{
+	char	name[8];			/* Name of the driver	    */
+	int	index;				/* Minor dev. to use	    */
+	char	*options;			/* Options for the driver   */
+};
+
+#define MAX_CMDLINECONSOLES 8
+
+static struct console_cmdline console_cmdline[MAX_CMDLINECONSOLES];
+static int selected_console = -1;
+static int preferred_console = -1;
+
 static int console_may_schedule;
+
+/*
+ *	Setup a list of consoles. Called from init/main.c
+ */
+static int __init console_setup(char *str) {
+	return 0;
+}
 
 static void __call_console_drivers(unsigned long start, unsigned long end)
 {
@@ -280,6 +303,118 @@ void release_console_sem(void)
 		wake_up_interruptible(&log_wait);
 }
 EXPORT_SYMBOL(release_console_sem);
+
+/*
+ * The console driver calls this routine during kernel initialization
+ * to register the console printing procedure with printk() and to
+ * print any messages that were printed by the kernel before the
+ * console driver was initialized.
+ */
+void register_console(struct console * console)
+{
+	int     i;
+	unsigned long flags;
+
+	if (preferred_console < 0)
+		preferred_console = selected_console;
+
+	/*
+	 *	See if we want to use this console driver. If we
+	 *	didn't select a console we take the first one
+	 *	that registers here.
+	 */
+	if (preferred_console < 0) {
+		if (console->index < 0)
+			console->index = 0;
+		if (console->setup == NULL ||
+		    console->setup(console, NULL) == 0) {
+			console->flags |= CON_ENABLED | CON_CONSDEV;
+			preferred_console = 0;
+		}
+	}
+
+	/*
+	 *	See if this console matches one we selected on
+	 *	the command line.
+	 */
+	for(i = 0; i < MAX_CMDLINECONSOLES && console_cmdline[i].name[0]; i++) {
+		if (strcmp(console_cmdline[i].name, console->name) != 0)
+			continue;
+		if (console->index >= 0 &&
+		    console->index != console_cmdline[i].index)
+			continue;
+		if (console->index < 0)
+			console->index = console_cmdline[i].index;
+		if (console->setup &&
+		    console->setup(console, console_cmdline[i].options) != 0)
+			break;
+		console->flags |= CON_ENABLED;
+		console->index = console_cmdline[i].index;
+		if (i == preferred_console)
+			console->flags |= CON_CONSDEV;
+		break;
+	}
+
+	if (!(console->flags & CON_ENABLED))
+		return;
+
+	/*
+	 *	Put this console in the list - keep the
+	 *	preferred driver at the head of the list.
+	 */
+	acquire_console_sem();
+	if ((console->flags & CON_CONSDEV) || console_drivers == NULL) {
+		console->next = console_drivers;
+		console_drivers = console;
+	} else {
+		console->next = console_drivers->next;
+		console_drivers->next = console;
+	}
+	if (console->flags & CON_PRINTBUFFER) {
+		/*
+		 * release_console_sem() will print out the buffered messages
+		 * for us.
+		 */
+		spin_lock_irqsave(&logbuf_lock, flags);
+		con_start = log_start;
+		spin_unlock_irqrestore(&logbuf_lock, flags);
+	}
+	release_console_sem();
+}
+EXPORT_SYMBOL(register_console);
+
+int unregister_console(struct console * console)
+{
+        struct console *a,*b;
+	int res = 1;
+
+	acquire_console_sem();
+	if (console_drivers == console) {
+		console_drivers=console->next;
+		res = 0;
+	} else {
+		for (a=console_drivers->next, b=console_drivers ;
+		     a; b=a, a=b->next) {
+			if (a == console) {
+				b->next = a->next;
+				res = 0;
+				break;
+			}  
+		}
+	}
+	
+	/* If last console is removed, we re-enable picking the first
+	 * one that gets registered. Without that, pmac early boot console
+	 * would prevent fbcon from taking over.
+	 */
+	if (console_drivers == NULL)
+		preferred_console = selected_console;
+		
+
+	release_console_sem();
+	return res;
+}
+EXPORT_SYMBOL(unregister_console);
 
 int printk_ratelimit(void) {
 	return 0;

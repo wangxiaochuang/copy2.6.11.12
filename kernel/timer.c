@@ -202,6 +202,76 @@ int mod_timer(struct timer_list *timer, unsigned long expires)
 	return __mod_timer(timer, expires);
 }
 
+EXPORT_SYMBOL(mod_timer);
+
+/***
+ * del_timer - deactive a timer.
+ * @timer: the timer to be deactivated
+ *
+ * del_timer() deactivates a timer - this works on both active and inactive
+ * timers.
+ *
+ * The function returns whether it has deactivated a pending timer or not.
+ * (ie. del_timer() of an inactive timer returns 0, del_timer() of an
+ * active timer returns 1.)
+ */
+int del_timer(struct timer_list *timer)
+{
+	unsigned long flags;
+	tvec_base_t *base;
+
+	check_timer(timer);
+
+repeat:
+ 	base = timer->base;
+	if (!base)
+		return 0;
+	spin_lock_irqsave(&base->lock, flags);
+	if (base != timer->base) {
+		spin_unlock_irqrestore(&base->lock, flags);
+		goto repeat;
+	}
+	list_del(&timer->entry);
+	/* Need to make sure that anybody who sees a NULL base also sees the list ops */
+	smp_wmb();
+	timer->base = NULL;
+	spin_unlock_irqrestore(&base->lock, flags);
+
+	return 1;
+}
+
+EXPORT_SYMBOL(del_timer);
+
+#ifdef CONFIG_SMP
+int del_timer_sync(struct timer_list *timer)
+{
+	tvec_base_t *base;
+	int i, ret = 0;
+
+	check_timer(timer);
+
+del_again:
+	ret += del_timer(timer);
+
+	for_each_online_cpu(i) {
+		base = &per_cpu(tvec_bases, i);
+		if (base->running_timer == timer) {
+			while (base->running_timer == timer) {
+				cpu_relax();
+				preempt_check_resched();
+			}
+			break;
+		}
+	}
+	smp_rmb();
+	if (timer_pending(timer))
+		goto del_again;
+
+	return ret;
+}
+EXPORT_SYMBOL(del_timer_sync);
+#endif
+
 static inline void __run_timers(tvec_base_t *base) {
 
 }

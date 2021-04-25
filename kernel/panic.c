@@ -9,6 +9,8 @@
 #include <linux/interrupt.h>
 #include <linux/nmi.h>
 
+int tainted;
+
 NORET_TYPE void panic(const char * fmt, ...) {
     for(;;);
 }

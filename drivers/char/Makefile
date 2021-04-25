@@ -15,8 +15,8 @@ obj-y	 += random.o tty_io.o n_tty.o
 # obj-y				+= misc.o
 # obj-$(CONFIG_VT)		+= vt_ioctl.o vc_screen.o consolemap.o \
 # 				   consolemap_deftbl.o selection.o keyboard.o
-obj-$(CONFIG_VT)		+= vt_ioctl.o \
-				   keyboard.o
+obj-$(CONFIG_VT)		+= vt_ioctl.o consolemap.o \
+				   consolemap_deftbl.o selection.o keyboard.o
 obj-$(CONFIG_HW_CONSOLE)	+= vt.o defkeymap.o
 # obj-$(CONFIG_MAGIC_SYSRQ)	+= sysrq.o
 # obj-$(CONFIG_ESPSERIAL)		+= esp.o
@@ -99,8 +99,8 @@ obj-$(CONFIG_HW_CONSOLE)	+= vt.o defkeymap.o
 quiet_cmd_conmk = CONMK   $@
       cmd_conmk = scripts/conmakehash $< > $@
 
-# $(obj)/consolemap_deftbl.c: $(src)/$(FONTMAPFILE)
-# 	$(call cmd,conmk)
+$(obj)/consolemap_deftbl.c: $(src)/$(FONTMAPFILE)
+	$(call cmd,conmk)
 
 $(obj)/defkeymap.o:  $(obj)/defkeymap.c
 

@@ -30,3 +30,35 @@ void sort_extable(struct exception_table_entry *start,
 }
 
 #endif
+
+#ifndef ARCH_HAS_SEARCH_EXTABLE
+/*
+ * Search one exception table for an entry corresponding to the
+ * given instruction address, and return the address of the entry,
+ * or NULL if none is found.
+ * We use a binary search, and thus we assume that the table is
+ * already sorted.
+ */
+const struct exception_table_entry *
+search_extable(const struct exception_table_entry *first,
+	       const struct exception_table_entry *last,
+	       unsigned long value)
+{
+	while (first <= last) {
+		const struct exception_table_entry *mid;
+
+		mid = (last - first) / 2 + first;
+		/*
+		 * careful, the distance between entries can be
+		 * larger than 2GB:
+		 */
+		if (mid->insn < value)
+			first = mid + 1;
+		else if (mid->insn > value)
+			last = mid - 1;
+		else
+			return mid;
+        }
+        return NULL;
+}
+#endif

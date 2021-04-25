@@ -15,6 +15,10 @@
 #include <asm/unistd.h>
 #include <asm/siginfo.h>
 
+int kill_proc(pid_t pid, int sig, int priv) {
+	return 0;
+}
+
 long do_no_restart_syscall(struct restart_block *param)
 {
 	return -EINTR;

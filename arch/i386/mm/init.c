@@ -36,6 +36,8 @@ unsigned int __VMALLOC_RESERVE = 128 << 20;
 
 unsigned long highstart_pfn, highend_pfn;
 
+static int noinline do_test_wp_bit(void);
+
 static pmd_t * __init one_md_table_init(pgd_t *pgd) {
     pud_t *pud;
     pmd_t *pmd_table;
@@ -137,6 +139,38 @@ static void __init kernel_physical_mapping_init(pgd_t *pgd_base) {
     }
 }
 
+static inline int page_kills_ppro(unsigned long pagenr)
+{
+    mypanic("in page kills ppro");
+    return 1;
+}
+
+static inline int page_is_ram(unsigned long pagenr)
+{
+	int i;
+	unsigned long addr, end;
+
+	if (efi_enabled) {
+        mypanic("efi enabled");
+	}
+
+	for (i = 0; i < e820.nr_map; i++) {
+
+		if (e820.map[i].type != E820_RAM)	/* not usable memory */
+			continue;
+		/*
+		 *	!!!FIXME!!! Some BIOSen report areas as RAM that
+		 *	are not. Notably the 640->1Mb area. We need a sanity
+		 *	check here.
+		 */
+		addr = (e820.map[i].addr+PAGE_SIZE-1) >> PAGE_SHIFT;
+		end = (e820.map[i].addr+e820.map[i].size) >> PAGE_SHIFT;
+		if  ((pagenr >= addr) && (pagenr < end))
+			return 1;
+	}
+	return 0;
+}
+
 #ifdef CONFIG_HIGHMEM
 pte_t *kmap_pte;
 pgprot_t kmap_prot;
@@ -173,6 +207,30 @@ void __init permanent_kmaps_init(pgd_t *pgd_base) {
     pte = pte_offset_kernel(pmd, vaddr);
     pkmap_page_table = pte;
 }
+
+void __init one_highpage_init(struct page *page, int pfn, int bad_ppro)
+{
+    if (page_is_ram(pfn) && !(bad_ppro && page_kills_ppro(pfn))) {
+        ClearPageReserved(page);
+        set_bit(PG_highmem, &page->flags);
+		set_page_count(page, 1);
+		__free_page(page);
+		totalhigh_pages++;
+    } else
+        SetPageReserved(page);
+}
+
+#ifndef CONFIG_DISCONTIGMEM
+void __init set_highmem_pages_init(int bad_ppro) 
+{
+	int pfn;
+	for (pfn = highstart_pfn; pfn < highend_pfn; pfn++)
+		one_highpage_init(pfn_to_page(pfn), pfn, bad_ppro);
+	totalram_pages += totalhigh_pages;
+}
+#else
+extern void set_highmem_pages_init(int);
+#endif /* !CONFIG_DISCONTIGMEM */
 
 #else
 #define kmap_init() do { } while (0)
@@ -284,4 +342,145 @@ void __init paging_init(void) {
      * 每一个node都有多个zone（DMZ、NORMAL、HIGHMEM）
      **/
     zone_sizes_init();
+}
+
+void __init test_wp_bit(void) {
+    printk("Checking if this processor honours the WP bit even in supervisor mode... ");
+
+	/* Any page-aligned address will do, the test is non-destructive */
+	__set_fixmap(FIX_WP_TEST, __pa(&swapper_pg_dir), PAGE_READONLY);
+	boot_cpu_data.wp_works_ok = do_test_wp_bit();
+	clear_fixmap(FIX_WP_TEST);
+
+	if (!boot_cpu_data.wp_works_ok) {
+		printk("No.\n");
+#ifdef CONFIG_X86_WP_WORKS_OK
+		panic("This kernel doesn't support CPU's with broken WP. Recompile it for a 386!");
+#endif
+	} else {
+		printk("Ok.\n");
+	}
+}
+
+#ifndef CONFIG_DISCONTIGMEM
+static void __init set_max_mapnr_init(void)
+{
+#ifdef CONFIG_HIGHMEM
+	max_mapnr = num_physpages = highend_pfn;
+#else
+#error "!CONFIG_HIGHMEM"
+#endif
+}
+#define __free_all_bootmem() free_all_bootmem()
+#else
+#error "CONFIG_DISCONTIGMEM"
+#endif /* !CONFIG_DISCONTIGMEM */
+
+static struct kcore_list kcore_mem, kcore_vmalloc; 
+
+void __init mem_init(void)
+{
+	extern int ppro_with_ram_bug(void);
+	int codesize, reservedpages, datasize, initsize;
+	int tmp;
+	int bad_ppro;
+
+#ifndef CONFIG_DISCONTIGMEM
+	if (!mem_map)
+		BUG();
+#endif
+	
+	bad_ppro = ppro_with_ram_bug();
+
+#ifdef CONFIG_HIGHMEM
+	/* check that fixmap and pkmap do not overlap */
+	if (PKMAP_BASE+LAST_PKMAP*PAGE_SIZE >= FIXADDR_START) {
+		printk(KERN_ERR "fixmap and kmap areas overlap - this will crash\n");
+		printk(KERN_ERR "pkstart: %lxh pkend: %lxh fixstart %lxh\n",
+				PKMAP_BASE, PKMAP_BASE+LAST_PKMAP*PAGE_SIZE, FIXADDR_START);
+		BUG();
+	}
+#endif
+
+    set_max_mapnr_init();
+
+#ifdef CONFIG_HIGHMEM
+	high_memory = (void *) __va(highstart_pfn * PAGE_SIZE);
+#else
+#error "!CONFIG_HIGHMEM"
+#endif
+
+    /* this will put all low memory onto the freelists */
+	totalram_pages += __free_all_bootmem();
+
+    reservedpages = 0;
+	for (tmp = 0; tmp < max_low_pfn; tmp++)
+		/*
+		 * Only count reserved RAM pages
+		 */
+		if (page_is_ram(tmp) && PageReserved(pfn_to_page(tmp)))
+			reservedpages++;
+
+    set_highmem_pages_init(bad_ppro);
+
+    codesize =  (unsigned long) &_etext - (unsigned long) &_text;
+	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;
+	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;
+
+    kclist_add(&kcore_mem, __va(0), max_low_pfn << PAGE_SHIFT);
+    kclist_add(&kcore_vmalloc, (void *)VMALLOC_START, 
+		   VMALLOC_END-VMALLOC_START);
+    
+    printk(KERN_INFO "Memory: %luk/%luk available (%dk kernel code, %dk reserved, %dk data, %dk init, %ldk highmem)\n",
+		(unsigned long) nr_free_pages() << (PAGE_SHIFT-10),
+		num_physpages << (PAGE_SHIFT-10),
+		codesize >> 10,
+		reservedpages << (PAGE_SHIFT-10),
+		datasize >> 10,
+		initsize >> 10,
+		(unsigned long) (totalhigh_pages << (PAGE_SHIFT-10))
+	       );
+    
+#ifdef CONFIG_X86_PAE
+#error "CONFIG_X86_PAE"
+#endif
+	if (boot_cpu_data.wp_works_ok < 0)
+		test_wp_bit();
+
+	/*
+	 * Subtle. SMP is doing it's boot stuff late (because it has to
+	 * fork idle threads) - but it also needs low mappings for the
+	 * protected-mode entry to work. We zap these entries only after
+	 * the WP-bit has been tested.
+	 */
+#ifndef CONFIG_SMP
+#error "!CONFIG_SMP"
+#endif
+}
+
+/*
+ * This function cannot be __init, since exceptions don't work in that
+ * section.  Put this after the callers, so that it cannot be inlined.
+ */
+static int noinline do_test_wp_bit(void)
+{
+	char tmp_reg;
+	int flag;
+
+	__asm__ __volatile__(
+		"	movb %0,%1	\n"
+		"1:	movb %1,%0	\n"
+		"	xorl %2,%2	\n"
+		"2:			\n"
+		".section __ex_table,\"a\"\n"
+		"	.align 4	\n"
+		"	.long 1b,2b	\n"
+		".previous		\n"
+		:"=m" (*(char *)fix_to_virt(FIX_WP_TEST)),
+		 "=q" (tmp_reg),
+		 "=r" (flag)
+		:"2" (1)
+		:"memory");
+	
+	return flag;
 }

@@ -11,7 +11,9 @@
 # 		attr.o bad_inode.o file.o filesystems.o namespace.o aio.o \
 # 		seq_file.o xattr.o libfs.o fs-writeback.o mpage.o direct-io.o \
 
-obj-y := open.o
+obj-y := open.o \
+		\
+		dcache.o inode.o
 
 # obj-$(CONFIG_EPOLL)		+= eventpoll.o
 # obj-$(CONFIG_COMPAT)		+= compat.o
@@ -41,7 +43,7 @@ obj-y := open.o
 # 
 # obj-$(CONFIG_DNOTIFY)		+= dnotify.o
 # 
-# obj-$(CONFIG_PROC_FS)		+= proc/
+obj-$(CONFIG_PROC_FS)		+= proc/
 # obj-y				+= partitions/
 # obj-$(CONFIG_SYSFS)		+= sysfs/
 # obj-y				+= devpts/

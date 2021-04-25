@@ -33,6 +33,25 @@ void __init early_intel_workaround(struct cpuinfo_x86 *c) {
 		c->x86_cache_alignment = 128;
 }
 
+/*
+ *	Early probe support logic for ppro memory erratum #50
+ *
+ *	This is called before we do cpu ident work
+ */
+ 
+int __init ppro_with_ram_bug(void)
+{
+	/* Uses data from early_cpu_detect now */
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
+	    boot_cpu_data.x86 == 6 &&
+	    boot_cpu_data.x86_model == 1 &&
+	    boot_cpu_data.x86_mask < 8) {
+		printk(KERN_INFO "Pentium Pro with Errata#50 detected. Taking evasive action.\n");
+		return 1;
+	}
+	return 0;
+}
+
 static void __init init_intel(struct cpuinfo_x86 *c) {
 
 }

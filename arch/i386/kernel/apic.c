@@ -253,6 +253,7 @@ fake_ioapic_page:
 
 fastcall void smp_apic_timer_interrupt(struct pt_regs *regs)
 {
+	printk(" arch i386 kernel apic.c 256\n");
 }
 
 /*

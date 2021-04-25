@@ -271,5 +271,15 @@ asmlinkage void __init start_kernel(void) {
 	 * this. But we do want output early, in case something goes wrong.
 	 */
 	console_init();
+	if (panic_later)
+		panic(panic_later, panic_param);
+	profile_init();
+	local_irq_enable();
+#ifdef CONFIG_BLK_DEV_INITRD
+#error "CONFIG_BLK_DEV_INITRD"
+#endif
+	vfs_caches_init_early();
+	mem_init();
+	kmem_cache_init();
     for(;;);
 }
