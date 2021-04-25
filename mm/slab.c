@@ -378,6 +378,67 @@ static void cache_estimate (unsigned long gfporder, size_t size, size_t align,
 	*left_over = wastage;
 }
 
+static void __devinit start_cpu_timer(int cpu)
+{
+	struct work_struct *reap_work = &per_cpu(reap_work, cpu);
+
+	/*
+	 * When this gets called from do_initcalls via cpucache_init(),
+	 * init_workqueues() has already run, so keventd will be setup
+	 * at that time.
+	 */
+	if (keventd_up() && reap_work->func == NULL) {
+		INIT_WORK(reap_work, cache_reap, NULL);
+		schedule_delayed_work_on(cpu, reap_work, HZ + 3 * cpu);
+	}
+}
+
+static struct array_cache *alloc_arraycache(int cpu, int entries, int batchcount)
+{
+	return NULL;
+}
+
+static int __devinit cpuup_callback(struct notifier_block *nfb,
+				  unsigned long action,
+				  void *hcpu)
+{
+	long cpu = (long)hcpu;
+	kmem_cache_t* cachep;
+
+	switch (action) {
+	case CPU_UP_PREPARE:
+		down(&cache_chain_sem);
+		list_for_each_entry(cachep, &cache_chain, next) {
+			struct array_cache *nc;
+
+			nc = alloc_arraycache(cpu, cachep->limit, cachep->batchcount);
+			if (!nc)
+				goto bad;
+
+			spin_lock_irq(&cachep->spinlock);
+			cachep->array[cpu] = nc;
+			cachep->free_limit = (1+num_online_cpus())*cachep->batchcount
+						+ cachep->num;
+			spin_unlock_irq(&cachep->spinlock);
+
+		}
+		up(&cache_chain_sem);
+		break;
+	case CPU_ONLINE:
+		start_cpu_timer(cpu);
+		break;
+#ifdef CONFIG_HOTPLUG_CPU
+#error "CONFIG_HOTPLUG_CPU"
+#endif
+	}
+	return NOTIFY_OK;
+bad:
+	up(&cache_chain_sem);
+	return NOTIFY_BAD;
+}
+
+static struct notifier_block cpucache_notifier = { &cpuup_callback, NULL, 0 };
+
 /* Initialisation. https://blog.csdn.net/rockrockwu/article/details/79976833
  * Called after the gfp() functions have been enabled, and before smp_init().
  */
@@ -414,10 +475,70 @@ void __init kmem_cache_init(void)
 	names = cache_names;
 
 	while (sizes->cs_size) {
+		/* For performance, all the general caches are L1 aligned.
+		 * This should be particularly beneficial on SMP boxes, as it
+		 * eliminates "false sharing".
+		 * Note for systems short on memory removing the alignment will
+		 * allow tighter packing of the smaller caches. */
 		sizes->cs_cachep = kmem_cache_create(names->name,
 			sizes->cs_size, ARCH_KMALLOC_MINALIGN,
 			(ARCH_KMALLOC_FLAGS | SLAB_PANIC), NULL, NULL);
+
+		/* Inc off-slab bufctl limit until the ceiling is hit. */
+		if (!(OFF_SLAB(sizes->cs_cachep))) {
+			offslab_limit = sizes->cs_size-sizeof(struct slab);
+			offslab_limit /= sizeof(kmem_bufctl_t);
+		}
+
+		sizes->cs_dmacachep = kmem_cache_create(names->name_dma,
+			sizes->cs_size, ARCH_KMALLOC_MINALIGN,
+			(ARCH_KMALLOC_FLAGS | SLAB_CACHE_DMA | SLAB_PANIC),
+			NULL, NULL);
+
+		sizes++;
+		names++;
 	}
+	/* 4) Replace the bootstrap head arrays */
+	{
+		void * ptr;
+		
+		ptr = kmalloc(sizeof(struct arraycache_init), GFP_KERNEL);
+		local_irq_disable();
+		BUG_ON(ac_data(&cache_cache) != &initarray_cache.cache);
+		memcpy(ptr, ac_data(&cache_cache), sizeof(struct arraycache_init));
+		cache_cache.array[smp_processor_id()] = ptr;
+		local_irq_enable();
+	
+		ptr = kmalloc(sizeof(struct arraycache_init), GFP_KERNEL);
+		local_irq_disable();
+		BUG_ON(ac_data(malloc_sizes[0].cs_cachep) != &initarray_generic.cache);
+		memcpy(ptr, ac_data(malloc_sizes[0].cs_cachep),
+				sizeof(struct arraycache_init));
+		malloc_sizes[0].cs_cachep->array[smp_processor_id()] = ptr;
+		local_irq_enable();
+	}
+
+	/* 5) resize the head arrays to their final sizes */
+	{
+		kmem_cache_t *cachep;
+		down(&cache_chain_sem);
+		list_for_each_entry(cachep, &cache_chain, next)
+			enable_cpucache(cachep);
+		up(&cache_chain_sem);
+	}
+
+	/* Done! */
+	g_cpucache_up = FULL;
+
+	/* Register a cpu startup notifier callback
+	 * that initializes ac_data for all new cpus
+	 */
+	register_cpu_notifier(&cpucache_notifier);
+	
+
+	/* The reap timers are started later, with a module init call:
+	 * That part of the kernel is not yet operational.
+	 */
 }
 
 static int __init cpucache_init(void)
@@ -429,11 +550,48 @@ __initcall(cpucache_init);
 
 static void *kmem_getpages(kmem_cache_t *cachep, int flags, int nodeid)
 {
-	return NULL;
+	struct page *page;
+	void *addr;
+	int i;
+
+	flags |= cachep->gfpflags;
+	if (likely(nodeid == -1)) {
+		page = alloc_pages(flags, cachep->gfporder);
+	} else {
+		page = alloc_pages_node(nodeid, flags, cachep->gfporder);
+	}
+	if (!page)
+		return NULL;
+	addr = page_address(page);
+
+	i = (1 << cachep->gfporder);
+	if (cachep->flags & SLAB_RECLAIM_ACCOUNT)
+		atomic_add(i, &slab_reclaim_pages);
+	add_page_state(nr_slab, i);
+	while (i--) {
+		SetPageSlab(page);
+		page++;
+	}
+	return addr;
 }
 
 static void kmem_freepages(kmem_cache_t *cachep, void *addr)
 {
+	unsigned long i = (1<<cachep->gfporder);
+	struct page *page = virt_to_page(addr);
+	const unsigned long nr_freed = i;
+
+	while (i--) {
+		if (!TestClearPageSlab(page))
+			BUG();
+		page++;
+	}
+	sub_page_state(nr_slab, nr_freed);
+	if (current->reclaim_state)
+		current->reclaim_state->reclaimed_slab += nr_freed;
+	free_pages((unsigned long)addr, cachep->gfporder);
+	if (cachep->flags & SLAB_RECLAIM_ACCOUNT) 
+		atomic_sub(1<<cachep->gfporder, &slab_reclaim_pages);
 }
 
 
@@ -698,6 +856,24 @@ EXPORT_SYMBOL(kmem_cache_create);
 #define check_irq_on()	do { } while(0)
 #define check_spinlock_acquired(x) do { } while(0)
 #endif
+
+/*
+ * Waits for all CPUs to execute func().
+ */
+static void smp_call_function_all_cpus(void (*func) (void *arg), void *arg)
+{
+	check_irq_on();
+	preempt_disable();
+
+	local_irq_disable();
+	func(arg);
+	local_irq_enable();
+
+	if (smp_call_function(func, arg, 1, 1))
+		BUG();
+
+	preempt_enable();
+}
 
 #if DEBUG
 #else
@@ -996,6 +1172,15 @@ static inline void * __cache_alloc (kmem_cache_t *cachep, int flags)
 	return objp;
 }
 
+/* 
+ * NUMA: different approach needed if the spinlock is moved into
+ * the l3 structure
+ */
+
+static void free_block(kmem_cache_t *cachep, void **objpp, int nr_objects)
+{
+}
+
 static inline void __cache_free (kmem_cache_t *cachep, void* objp)
 {
 
@@ -1008,7 +1193,15 @@ void * kmem_cache_alloc (kmem_cache_t *cachep, int flags) {
 EXPORT_SYMBOL(kmem_cache_alloc);
 
 void * __kmalloc (size_t size, int flags) {
-    return NULL;
+	struct cache_sizes *csizep = malloc_sizes;
+
+	for (; csizep->cs_size; csizep++) {
+		if (size > csizep->cs_size)
+			continue;
+		return __cache_alloc(flags & GFP_DMA ?
+			 csizep->cs_dmacachep : csizep->cs_cachep, flags);
+	}
+	return NULL;
 }
 
 EXPORT_SYMBOL(__kmalloc);
@@ -1047,6 +1240,129 @@ void kfree (const void *objp) {
 
 EXPORT_SYMBOL(kfree);
 
+struct ccupdate_struct {
+	kmem_cache_t *cachep;
+	struct array_cache *new[NR_CPUS];
+};
+
+static void do_ccupdate_local(void *info)
+{
+	struct ccupdate_struct *new = (struct ccupdate_struct *)info;
+	struct array_cache *old;
+
+	check_irq_off();
+	old = ac_data(new->cachep);
+	
+	new->cachep->array[smp_processor_id()] = new->new[smp_processor_id()];
+	new->new[smp_processor_id()] = old;
+}
+
+static int do_tune_cpucache (kmem_cache_t* cachep, int limit, int batchcount, int shared)
+{
+	struct ccupdate_struct new;
+	struct array_cache *new_shared;
+	int i;
+
+	memset(&new.new,0,sizeof(new.new));
+	for (i = 0; i < NR_CPUS; i++) {
+		if (cpu_online(i)) {
+			new.new[i] = alloc_arraycache(i, limit, batchcount);
+			if (!new.new[i]) {
+				for (i--; i >= 0; i--) kfree(new.new[i]);
+				return -ENOMEM;
+			}
+		} else {
+			new.new[i] = NULL;
+		}
+	}
+	new.cachep = cachep;
+
+	smp_call_function_all_cpus(do_ccupdate_local, (void *)&new);
+	
+	check_irq_on();
+	spin_lock_irq(&cachep->spinlock);
+	cachep->batchcount = batchcount;
+	cachep->limit = limit;
+	cachep->free_limit = (1+num_online_cpus())*cachep->batchcount + cachep->num;
+	spin_unlock_irq(&cachep->spinlock);
+
+	for (i = 0; i < NR_CPUS; i++) {
+		struct array_cache *ccold = new.new[i];
+		if (!ccold)
+			continue;
+		spin_lock_irq(&cachep->spinlock);
+		free_block(cachep, ac_entry(ccold), ccold->avail);
+		spin_unlock_irq(&cachep->spinlock);
+		kfree(ccold);
+	}
+	new_shared = alloc_arraycache(-1, batchcount*shared, 0xbaadf00d);
+	if (new_shared) {
+		struct array_cache *old;
+
+		spin_lock_irq(&cachep->spinlock);
+		old = cachep->lists.shared;
+		cachep->lists.shared = new_shared;
+		if (old)
+			free_block(cachep, ac_entry(old), old->avail);
+		spin_unlock_irq(&cachep->spinlock);
+		kfree(old);
+	}
+
+	return 0;
+}
+
 static void enable_cpucache (kmem_cache_t *cachep)
+{
+	int err;
+	int limit, shared;
+
+	/* The head array serves three purposes:
+	 * - create a LIFO ordering, i.e. return objects that are cache-warm
+	 * - reduce the number of spinlock operations.
+	 * - reduce the number of linked list operations on the slab and 
+	 *   bufctl chains: array operations are cheaper.
+	 * The numbers are guessed, we should auto-tune as described by
+	 * Bonwick.
+	 */
+	if (cachep->objsize > 131072)
+		limit = 1;
+	else if (cachep->objsize > PAGE_SIZE)
+		limit = 8;
+	else if (cachep->objsize > 1024)
+		limit = 24;
+	else if (cachep->objsize > 256)
+		limit = 54;
+	else
+		limit = 120;
+
+	/* Cpu bound tasks (e.g. network routing) can exhibit cpu bound
+	 * allocation behaviour: Most allocs on one cpu, most free operations
+	 * on another cpu. For these cases, an efficient object passing between
+	 * cpus is necessary. This is provided by a shared array. The array
+	 * replaces Bonwick's magazine layer.
+	 * On uniprocessor, it's functionally equivalent (but less efficient)
+	 * to a larger limit. Thus disabled by default.
+	 */
+	shared = 0;
+#ifdef CONFIG_SMP
+	if (cachep->objsize <= PAGE_SIZE)
+		shared = 8;
+#endif
+
+#if DEBUG
+	/* With debugging enabled, large batchcount lead to excessively
+	 * long periods with disabled local interrupts. Limit the 
+	 * batchcount
+	 */
+	if (limit > 32)
+		limit = 32;
+#endif
+	err = do_tune_cpucache(cachep, limit, (limit+1)/2, shared);
+	if (err)
+		printk(KERN_ERR "enable_cpucache failed for %s, error %d.\n",
+					cachep->name, -err);
+}
+
+static void cache_reap(void *unused)
 {
 }

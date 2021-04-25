@@ -86,3 +86,14 @@ int fastcall schedule_work(struct work_struct *work)
 {
 	return queue_work(keventd_wq, work);
 }
+
+int schedule_delayed_work_on(int cpu,
+			struct work_struct *work, unsigned long delay)
+{
+	return 0;
+}
+
+int keventd_up(void)
+{
+	return keventd_wq != NULL;
+}

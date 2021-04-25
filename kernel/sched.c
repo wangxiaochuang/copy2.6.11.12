@@ -204,6 +204,26 @@ void fastcall __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
 	__wake_up_common(q, mode, 1, 0, NULL);
 }
 
+static inline void __cond_resched(void)
+{
+	do {
+		add_preempt_count(PREEMPT_ACTIVE);
+		schedule();
+		sub_preempt_count(PREEMPT_ACTIVE);
+	} while (need_resched());
+}
+
+int __sched cond_resched(void)
+{
+	if (need_resched()) {
+		__cond_resched();
+		return 1;
+	}
+	return 0;
+}
+
+EXPORT_SYMBOL(cond_resched);
+
 void __devinit init_idle(task_t *idle, int cpu) {
 	runqueue_t *rq = cpu_rq(cpu);
 	unsigned long flags;

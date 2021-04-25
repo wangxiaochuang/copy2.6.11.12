@@ -38,6 +38,38 @@ static struct page_address_slot {
     spinlock_t lock;
 } ____cacheline_aligned_in_smp page_address_htable[1<<PA_HASH_ORDER];
 
+static struct page_address_slot *page_slot(struct page *page)
+{
+	return &page_address_htable[hash_ptr(page, PA_HASH_ORDER)];
+}
+
+void *page_address(struct page *page)
+{
+	unsigned long flags;
+	void *ret;
+	struct page_address_slot *pas;
+
+    if (!PageHighMem(page))
+        return lowmem_page_address(page);
+
+    pas = page_slot(page);
+    ret = NULL;
+    spin_lock_irqsave(&pas->lock, flags);
+    if (!list_empty(&pas->lh)) {
+        struct page_address_map *pam;
+
+        list_for_each_entry(pam, &pas->lh, list) {
+            ret = pam->virtual;
+            goto done;
+        }
+    }
+done:
+	spin_unlock_irqrestore(&pas->lock, flags);
+	return ret;
+}
+
+EXPORT_SYMBOL(page_address);
+
 void __init page_address_init(void) {
     int i;
     INIT_LIST_HEAD(&page_address_pool);

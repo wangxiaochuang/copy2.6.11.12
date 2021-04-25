@@ -417,7 +417,7 @@ int unregister_console(struct console * console)
 EXPORT_SYMBOL(unregister_console);
 
 int printk_ratelimit(void) {
-	return 0;
+	return 1;
 }
 EXPORT_SYMBOL(printk_ratelimit);
 
