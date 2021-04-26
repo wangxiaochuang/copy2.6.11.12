@@ -276,6 +276,14 @@ static inline void __run_timers(tvec_base_t *base) {
 
 }
 
+/******************************************************************/
+
+/*
+ * Timekeeping variables
+ */
+unsigned long tick_usec = TICK_USEC; 		/* USER_HZ period (usec) */
+unsigned long tick_nsec = TICK_NSEC;		/* ACTHZ period (nsec) */
+
 /* 
  * The current time 
  * wall_to_monotonic is what we need to add to xtime (or xtime corrected 

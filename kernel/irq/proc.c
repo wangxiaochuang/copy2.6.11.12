@@ -30,7 +30,7 @@ void register_handler_proc(unsigned int irq, struct irqaction *action)
 					!name_unique(irq, action))
 		return;
 
-    mypanic("in register_handler_proc");
+    printk("##### in register_handler_proc");
 }
 
 void register_irq_proc(unsigned int irq) {
@@ -44,5 +44,5 @@ void register_irq_proc(unsigned int irq) {
     memset(name, 0, MAX_NAMELEN);
 	sprintf(name, "%d", irq);
 
-    mypanic("in register_irq_proc");
+    printk("##### in register_irq_proc\n");
 }

@@ -15,9 +15,17 @@
 #include <asm/hpet.h>
 #include <linux/hpet.h>
 
+unsigned long hpet_tick;	/* hpet clks count per tick */
 unsigned long hpet_address;	/* hpet memory map physical address */
 
+static int use_hpet; 		/* can be used for runtime check of hpet */
 static int boot_hpet_disable; 	/* boottime override for HPET timer */
+static void __iomem * hpet_virt_address;	/* hpet kernel virtual address */
+
+int hpet_readl(unsigned long a)
+{
+	return readl(hpet_virt_address + a);
+}
 
 /*
  * Check whether HPET was found by ACPI boot parse. If yes setup HPET
@@ -26,6 +34,11 @@ static int boot_hpet_disable; 	/* boottime override for HPET timer */
 int __init hpet_enable(void)
 {
     return 0;
+}
+
+int is_hpet_enabled(void)
+{
+	return use_hpet;
 }
 
 int is_hpet_capable(void)

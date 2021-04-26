@@ -117,6 +117,14 @@ static int __init obsolete_checksetup(char *line)
 }
 
 /*
+ * This should be approx 2 Bo*oMips to start (note initial shift), and will
+ * still work even if initially too large, it will just take slightly longer
+ */
+unsigned long loops_per_jiffy = (1<<12);
+
+EXPORT_SYMBOL(loops_per_jiffy);
+
+/*
  * Unknown boot options get handed to init, unless they look like
  * failed parameters
  */
@@ -281,5 +289,9 @@ asmlinkage void __init start_kernel(void) {
 	vfs_caches_init_early();
 	mem_init();
 	kmem_cache_init();
+	numa_policy_init();
+	if (late_time_init)
+		late_time_init();
+	calibrate_delay();
     for(;;);
 }

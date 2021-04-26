@@ -395,7 +395,22 @@ static void __devinit start_cpu_timer(int cpu)
 
 static struct array_cache *alloc_arraycache(int cpu, int entries, int batchcount)
 {
-	return NULL;
+	int memsize = sizeof(void *) * entries + sizeof(struct array_cache);
+	struct array_cache *nc = NULL;
+
+	if (cpu != -1) {
+		nc = kmem_cache_alloc_node(kmem_find_general_cachep(memsize,
+					GFP_KERNEL), cpu_to_node(cpu));
+	}
+	if (!nc)
+		nc = kmalloc(memsize, GFP_KERNEL);
+	if (nc) {
+		nc->avail = 0;
+		nc->limit = entries;
+		nc->batchcount = batchcount;
+		nc->touched = 0;
+	}
+	return nc;
 }
 
 static int __devinit cpuup_callback(struct notifier_block *nfb,
@@ -594,7 +609,44 @@ static void kmem_freepages(kmem_cache_t *cachep, void *addr)
 		atomic_sub(1<<cachep->gfporder, &slab_reclaim_pages);
 }
 
+static void kmem_rcu_free(struct rcu_head *head)
+{
+	struct slab_rcu *slab_rcu = (struct slab_rcu *) head;
+	kmem_cache_t *cachep = slab_rcu->cachep;
 
+	kmem_freepages(cachep, slab_rcu->addr);
+	if (OFF_SLAB(cachep))
+		kmem_cache_free(cachep->slabp_cache, slab_rcu);
+}
+
+static void slab_destroy (kmem_cache_t *cachep, struct slab *slabp)
+{
+	void *addr = slabp->s_mem - slabp->colouroff;
+#if DEBUG
+#error "DEBUG != 0"
+#else
+	if (cachep->dtor) {
+		int i;
+		for (i = 0; i < cachep->num; i++) {
+			void *objp = slabp->s_mem + cachep->objsize * i;
+			(cachep->dtor)(objp, cachep, 0);
+		}
+	}
+#endif
+
+	if (unlikely(cachep->flags & SLAB_DESTROY_BY_RCU)) {
+		struct slab_rcu *slab_rcu;
+
+		slab_rcu = (struct slab_rcu *) slabp;
+		slab_rcu->cachep = cachep;
+		slab_rcu->addr = addr;
+		call_rcu(&slab_rcu->head, kmem_rcu_free);
+	} else {
+		kmem_freepages(cachep, addr);
+		if (OFF_SLAB(cachep))
+			kmem_cache_free(cachep->slabp_cache, slabp);
+	}
+}
 
 kmem_cache_t *
 kmem_cache_create (const char *name, size_t size, size_t align,
@@ -1179,11 +1231,92 @@ static inline void * __cache_alloc (kmem_cache_t *cachep, int flags)
 
 static void free_block(kmem_cache_t *cachep, void **objpp, int nr_objects)
 {
+	int i;
+
+	check_spinlock_acquired(cachep);
+
+	/* NUMA: move add into loop */
+	cachep->lists.free_objects += nr_objects;
+
+	for (i = 0; i < nr_objects; i++) {
+		void *objp = objpp[i];
+		struct slab *slabp;
+		unsigned int objnr;
+
+		slabp = GET_PAGE_SLAB(virt_to_page(objp));
+		list_del(&slabp->list);
+		objnr = (objp - slabp->s_mem) / cachep->objsize;
+		check_slabp(cachep, slabp);
+
+		slab_bufctl(slabp)[objnr] = slabp->free;
+		slabp->free = objnr;
+		STATS_DEC_ACTIVE(cachep);
+		slabp->inuse--;
+		check_slabp(cachep, slabp);
+
+		/* fixup slab chains */
+		if (slabp->inuse == 0) {
+			if (cachep->lists.free_objects > cachep->free_limit) {
+				cachep->lists.free_objects -= cachep->num;
+				slab_destroy(cachep, slabp);
+			} else {
+				list_add(&slabp->list,
+				&list3_data_ptr(cachep, objp)->slabs_free);
+			}
+		} else {
+			list_add_tail(&slabp->list,
+				&list3_data_ptr(cachep, objp)->slabs_partial);
+		}
+	}
+}
+
+static void cache_flusharray (kmem_cache_t* cachep, struct array_cache *ac)
+{
+	int batchcount;
+
+	batchcount = ac->batchcount;
+	check_irq_off();
+	spin_lock(&cachep->spinlock);
+	if (cachep->lists.shared) {
+		struct array_cache *shared_array = cachep->lists.shared;
+		int max = shared_array->limit - shared_array->avail;
+		if (max) {
+			if (batchcount > max)
+				batchcount = max;
+			memcpy(&ac_entry(shared_array)[shared_array->avail],
+					&ac_entry(ac)[0],
+					sizeof(void*)*batchcount);
+			shared_array->avail += batchcount;
+			goto free_done;
+		}
+	}
+	free_block(cachep, &ac_entry(ac)[0], batchcount);
+free_done:
+#if STATS
+#error "STATS != 0"
+#endif
+	spin_unlock(&cachep->spinlock);
+	ac->avail -= batchcount;
+	memmove(&ac_entry(ac)[0], &ac_entry(ac)[batchcount],
+			sizeof(void*)*ac->avail);
 }
 
 static inline void __cache_free (kmem_cache_t *cachep, void* objp)
 {
+	struct array_cache *ac = ac_data(cachep);
 
+	check_irq_off();
+	objp = cache_free_debugcheck(cachep, objp, __builtin_return_address(0));
+
+	if (likely(ac->avail < ac->limit)) {
+		STATS_INC_FREEHIT(cachep);
+		ac_entry(ac)[ac->avail++] = objp;
+		return;
+	} else {
+		STATS_INC_FREEMISS(cachep);
+		cache_flusharray(cachep, ac);
+		ac_entry(ac)[ac->avail++] = objp;
+	}
 }
 
 void * kmem_cache_alloc (kmem_cache_t *cachep, int flags) {

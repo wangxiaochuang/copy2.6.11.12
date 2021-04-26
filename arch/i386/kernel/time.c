@@ -38,6 +38,8 @@ u64 jiffies_64 = INITIAL_JIFFIES;
 
 EXPORT_SYMBOL(jiffies_64);
 
+unsigned long cpu_khz;	/* Detected as we calibrate the TSC */
+
 DEFINE_SPINLOCK(rtc_lock);
 
 DEFINE_SPINLOCK(i8253_lock);
@@ -52,7 +54,7 @@ struct timer_opts *cur_timer = &timer_none;
 static inline void do_timer_interrupt(int irq, void *dev_id,
 					struct pt_regs *regs)
 {
-    myprint("do_timer_interrupt...");
+    printk("do_timer_interrupt...\n");
 }
 
 /*

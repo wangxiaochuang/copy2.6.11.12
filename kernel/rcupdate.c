@@ -40,6 +40,21 @@ DEFINE_PER_CPU(struct rcu_data, rcu_bh_data) = { 0L };
 static DEFINE_PER_CPU(struct tasklet_struct, rcu_tasklet) = {NULL};
 static int maxbatch = 10;
 
+void fastcall call_rcu(struct rcu_head *head,
+				void (*func)(struct rcu_head *rcu))
+{
+	unsigned long flags;
+	struct rcu_data *rdp;
+
+	head->func = func;
+	head->next = NULL;
+	local_irq_save(flags);
+	rdp = &__get_cpu_var(rcu_data);
+	*rdp->nxttail = head;
+	rdp->nxttail = &head->next;
+	local_irq_restore(flags);
+}
+
 /*
  * Invoke the completed RCU callbacks. They are expected to be in
  * a per-cpu list.
