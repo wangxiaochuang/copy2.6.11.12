@@ -620,10 +620,32 @@ EXPORT_SYMBOL(__alloc_pages);
 
 fastcall unsigned long __get_free_pages(unsigned int gfp_mask, unsigned int order)
 {
-	return 0;
+	struct page * page;
+	page = alloc_pages(gfp_mask, order);
+	if (!page)
+		return 0;
+	return (unsigned long) page_address(page);
 }
 
 EXPORT_SYMBOL(__get_free_pages);
+
+fastcall unsigned long get_zeroed_page(unsigned int gfp_mask)
+{
+	struct page * page;
+
+	/*
+	 * get_zeroed_page() returns a 32-bit address, which cannot represent
+	 * a highmem page
+	 */
+	BUG_ON(gfp_mask & __GFP_HIGHMEM);
+
+	page = alloc_pages(gfp_mask | __GFP_ZERO, 0);
+	if (page)
+		return (unsigned long) page_address(page);
+	return 0;
+}
+
+EXPORT_SYMBOL(get_zeroed_page);
 
 fastcall void __free_pages(struct page *page, unsigned int order)
 {

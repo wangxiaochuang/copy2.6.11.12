@@ -143,6 +143,44 @@ asmlinkage void schedule_tail(task_t *prev)
 {
 }
 
+unsigned long nr_running(void)
+{
+	unsigned long i, sum = 0;
+
+	for_each_online_cpu(i)
+		sum += cpu_rq(i)->nr_running;
+
+	return sum;
+}
+
+unsigned long nr_uninterruptible(void)
+{
+	unsigned long i, sum = 0;
+
+	for_each_cpu(i)
+		sum += cpu_rq(i)->nr_uninterruptible;
+
+	/*
+	 * Since we read the counters lockless, it might be slightly
+	 * inaccurate. Do not allow it to go below zero though:
+	 */
+	if (unlikely((long)sum < 0))
+		sum = 0;
+
+	return sum;
+}
+
+
+
+
+
+
+
+
+DEFINE_PER_CPU(struct kernel_stat, kstat);
+
+EXPORT_PER_CPU_SYMBOL(kstat);
+
 asmlinkage void __sched schedule(void) {
 	
 }

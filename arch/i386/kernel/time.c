@@ -34,6 +34,13 @@
 
 #include <asm/arch_hooks.h>
 
+#include "io_ports.h"
+
+extern spinlock_t i8259A_lock;
+int pit_latch_buggy;              /* extern */
+
+#include "do_timer.h"
+
 u64 jiffies_64 = INITIAL_JIFFIES;
 
 EXPORT_SYMBOL(jiffies_64);
@@ -47,6 +54,39 @@ EXPORT_SYMBOL(i8253_lock);
 
 struct timer_opts *cur_timer = &timer_none;
 
+static int set_rtc_mmss(unsigned long nowtime)
+{
+	int retval;
+
+	/* gets recalled with irq locally disabled */
+	spin_lock(&rtc_lock);
+	if (efi_enabled)
+		panic("efi enabled");
+	else
+		retval = mach_set_rtc_mmss(nowtime);
+	spin_unlock(&rtc_lock);
+
+	return retval;
+}
+
+/* last time the cmos clock got updated */
+static long last_rtc_update;
+
+int timer_ack;
+
+#if defined(CONFIG_SMP) && defined(CONFIG_FRAME_POINTER)
+unsigned long profile_pc(struct pt_regs *regs)
+{
+	unsigned long pc = instruction_pointer(regs);
+
+	if (in_lock_functions(pc))
+		return *(unsigned long *)(regs->ebp + 4);
+
+	return pc;
+}
+EXPORT_SYMBOL(profile_pc);
+#endif
+
 /*
  * timer_interrupt() needs to keep up the real-time clock,
  * as well as call the "do_timer()" routine every clocktick
@@ -54,7 +94,57 @@ struct timer_opts *cur_timer = &timer_none;
 static inline void do_timer_interrupt(int irq, void *dev_id,
 					struct pt_regs *regs)
 {
-    printk("do_timer_interrupt...\n");
+#ifdef CONFIG_X86_IO_APIC
+	if (timer_ack) {
+		/*
+		 * Subtle, when I/O APICs are used we have to ack timer IRQ
+		 * manually to reset the IRR bit for do_slow_gettimeoffset().
+		 * This will also deassert NMI lines for the watchdog if run
+		 * on an 82489DX-based system.
+		 */
+		spin_lock(&i8259A_lock);
+		outb(0x0c, PIC_MASTER_OCW3);
+		/* Ack the IRQ; AEOI will end it automatically. */
+		inb(PIC_MASTER_POLL);
+		spin_unlock(&i8259A_lock);
+	}
+#endif
+
+	do_timer_interrupt_hook(regs);
+
+	/*
+	 * If we have an externally synchronized Linux clock, then update
+	 * CMOS clock accordingly every ~11 minutes. Set_rtc_mmss() has to be
+	 * called as close as possible to 500 ms before the new second starts.
+	 */
+	if ((time_status & STA_UNSYNC) == 0 &&
+	    xtime.tv_sec > last_rtc_update + 660 &&
+	    (xtime.tv_nsec / 1000)
+			>= USEC_AFTER - ((unsigned) TICK_SIZE) / 2 &&
+	    (xtime.tv_nsec / 1000)
+			<= USEC_BEFORE + ((unsigned) TICK_SIZE) / 2) {
+		/* horrible...FIXME */
+		if (efi_enabled) {
+			panic("efi_enabled.....");
+		} else if (set_rtc_mmss(xtime.tv_sec) == 0)
+			last_rtc_update = xtime.tv_sec;
+		else
+			last_rtc_update = xtime.tv_sec - 600; /* do it again in 60 s */
+	}
+
+	if (MCA_bus) {
+		/* The PS/2 uses level-triggered interrupts.  You can't
+		turn them off, nor would you want to (any attempt to
+		enable edge-triggered interrupts usually gets intercepted by a
+		special hardware circuit).  Hence we have to acknowledge
+		the timer interrupt.  Through some incredibly stupid
+		design idea, the reset for IRQ 0 is done by setting the
+		high bit of the PPI port B (0x61).  Note that some PS/2s,
+		notably the 55SX, work fine if this is removed.  */
+
+		irq = inb_p( 0x61 );	/* read the current state */
+		outb_p( irq|0x80, 0x61 );	/* reset the IRQ */
+	}
 }
 
 /*

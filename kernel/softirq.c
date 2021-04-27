@@ -35,6 +35,44 @@ static inline void wakeup_softirqd(void)
 		wake_up_process(tsk);
 }
 
+asmlinkage void __do_softirq(void) {
+	
+}
+
+#ifndef __ARCH_HAS_DO_SOFTIRQ
+
+asmlinkage void do_softirq(void) {
+
+}
+
+EXPORT_SYMBOL(do_softirq);
+
+#endif
+
+void local_bh_enable(void) {
+
+}
+
+EXPORT_SYMBOL(local_bh_enable);
+
+#ifdef __ARCH_IRQ_EXIT_IRQS_DISABLED
+# define invoke_softirq()	__do_softirq()
+#else
+# define invoke_softirq()	do_softirq()
+#endif
+
+/*
+ * Exit an interrupt context. Process softirqs if needed and possible:
+ */
+void irq_exit(void)
+{
+	account_system_vtime(current);
+	sub_preempt_count(IRQ_EXIT_OFFSET);
+	if (!in_interrupt() && local_softirq_pending())
+		invoke_softirq();
+	preempt_enable_no_resched();
+}
+
 /*
  * This function must run with irqs disabled!
  */
@@ -56,6 +94,15 @@ inline fastcall void raise_softirq_irqoff(unsigned int nr)
 }
 
 EXPORT_SYMBOL(raise_softirq_irqoff);
+
+void fastcall raise_softirq(unsigned int nr)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	raise_softirq_irqoff(nr);
+	local_irq_restore(flags);
+}
 
 void open_softirq(int nr, void (*action)(struct softirq_action*), void *data)
 {

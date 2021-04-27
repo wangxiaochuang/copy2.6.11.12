@@ -11,6 +11,25 @@
  */
 fastcall unsigned int do_IRQ(struct pt_regs *regs)
 {
+    int irq = regs->orig_eax & 0xff;
+#ifdef CONFIG_4KSTACKS
+#error "CONFIG_4KSTACKS"
+#endif
+
+    irq_enter();
+#ifdef CONFIG_DEBUG_STACKOVERFLOW
+#error "CONFIG_DEBUG_STACKOVERFLOW"
+#endif
+
+#ifdef CONFIG_4KSTACKS
+#error "CONFIG_4KSTACKS"
+#endif
+
+    __do_IRQ(irq, regs);
+
+    irq_exit();
+
+    return 1;
 }
 
 /*

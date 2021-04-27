@@ -293,5 +293,7 @@ asmlinkage void __init start_kernel(void) {
 	if (late_time_init)
 		late_time_init();
 	calibrate_delay();
+	pidmap_init();
+	pgtable_cache_init();
     for(;;);
 }

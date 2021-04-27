@@ -17,7 +17,7 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
 {
 	do_timer(regs);
 #ifndef CONFIG_SMP
-	update_process_times(user_mode(regs));
+#error "!CONFIG_SMP"
 #endif
 /*
  * In the SMP case we use the local APIC timer interrupt to do the

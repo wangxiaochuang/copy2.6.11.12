@@ -6,7 +6,7 @@ static struct proc_dir_entry *root_irq_dir, *irq_dir[NR_IRQS];
 
 #undef MAX_NAMELEN
 
-#define MAX_NAMELEN 10
+// #define MAX_NAMELEN 10
 
 #define MAX_NAMELEN 128
 

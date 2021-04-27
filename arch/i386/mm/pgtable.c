@@ -69,3 +69,62 @@ pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address)
 {
 	return (pte_t *)__get_free_page(GFP_KERNEL|__GFP_REPEAT|__GFP_ZERO);
 }
+
+DEFINE_SPINLOCK(pgd_lock);
+struct page *pgd_list;
+
+static inline void pgd_list_add(pgd_t *pgd)
+{
+	struct page *page = virt_to_page(pgd);
+	page->index = (unsigned long)pgd_list;
+	if (pgd_list)
+		pgd_list->private = (unsigned long)&page->index;
+	pgd_list = page;
+	page->private = (unsigned long)&pgd_list;
+}
+
+static inline void pgd_list_del(pgd_t *pgd)
+{
+	struct page *next, **pprev, *page = virt_to_page(pgd);
+	next = (struct page *)page->index;
+	pprev = (struct page **)page->private;
+	*pprev = next;
+	if (next)
+		next->private = (unsigned long)pprev;
+}
+
+void pgd_ctor(void *pgd, kmem_cache_t *cache, unsigned long unused)
+{
+	unsigned long flags;
+
+	if (PTRS_PER_PMD == 1)
+		spin_lock_irqsave(&pgd_lock, flags);
+
+	memcpy((pgd_t *)pgd + USER_PTRS_PER_PGD,
+			swapper_pg_dir + USER_PTRS_PER_PGD,
+			(PTRS_PER_PGD - USER_PTRS_PER_PGD) * sizeof(pgd_t));
+
+	if (PTRS_PER_PMD > 1)
+		return;
+
+	pgd_list_add(pgd);
+	spin_unlock_irqrestore(&pgd_lock, flags);
+	memset(pgd, 0, USER_PTRS_PER_PGD*sizeof(pgd_t));
+}
+
+/* never called when PTRS_PER_PMD > 1 */
+void pgd_dtor(void *pgd, kmem_cache_t *cache, unsigned long unused)
+{
+	unsigned long flags; /* can be called from interrupt context */
+
+	spin_lock_irqsave(&pgd_lock, flags);
+	pgd_list_del(pgd);
+	spin_unlock_irqrestore(&pgd_lock, flags);
+}
+
+pgd_t *pgd_alloc(struct mm_struct *mm) {
+	return NULL;
+}
+
+void pgd_free(pgd_t *pgd) {
+}

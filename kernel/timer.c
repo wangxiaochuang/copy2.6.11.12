@@ -18,6 +18,12 @@
 #include <asm/timex.h>
 #include <asm/io.h>
 
+#ifdef CONFIG_TIME_INTERPOLATION
+static void time_interpolator_update(long delta_nsec);
+#else
+#define time_interpolator_update(x)
+#endif
+
 /*
  * per-CPU timer vector definitions:
  */
@@ -297,6 +303,258 @@ struct timespec wall_to_monotonic __attribute__ ((aligned (16)));
 
 EXPORT_SYMBOL(xtime);
 
+/* Don't completely fail for HZ > 500.  */
+int tickadj = 500/HZ ? : 1;		/* microsecs */
+
+/*
+ * phase-lock loop variables
+ */
+/* TIME_ERROR prevents overwriting the CMOS clock */
+int time_state = TIME_OK;		/* clock synchronization status	*/
+int time_status = STA_UNSYNC;		/* clock status bits		*/
+long time_offset;			/* time adjustment (us)		*/
+long time_constant = 2;			/* pll time constant		*/
+long time_tolerance = MAXFREQ;		/* frequency tolerance (ppm)	*/
+long time_precision = 1;		/* clock precision (us)		*/
+long time_maxerror = NTP_PHASE_LIMIT;	/* maximum error (us)		*/
+long time_esterror = NTP_PHASE_LIMIT;	/* estimated error (us)		*/
+long time_phase;			/* phase offset (scaled us)	*/
+long time_freq = (((NSEC_PER_SEC + HZ/2) % HZ - HZ/2) << SHIFT_USEC) / NSEC_PER_USEC;
+					/* frequency offset (scaled ppm)*/
+long time_adj;				/* tick adjust (scaled 1 / HZ)	*/
+long time_reftime;			/* time at last adjustment (s)	*/
+long time_adjust;
+long time_next_adjust;
+
+static void second_overflow(void)
+{
+    long ltemp;
+
+    /* Bump the maxerror field */
+    time_maxerror += time_tolerance >> SHIFT_USEC;
+    if ( time_maxerror > NTP_PHASE_LIMIT ) {
+	time_maxerror = NTP_PHASE_LIMIT;
+	time_status |= STA_UNSYNC;
+    }
+
+    /*
+     * Leap second processing. If in leap-insert state at
+     * the end of the day, the system clock is set back one
+     * second; if in leap-delete state, the system clock is
+     * set ahead one second. The microtime() routine or
+     * external clock driver will insure that reported time
+     * is always monotonic. The ugly divides should be
+     * replaced.
+     */
+    switch (time_state) {
+
+    case TIME_OK:
+	if (time_status & STA_INS)
+	    time_state = TIME_INS;
+	else if (time_status & STA_DEL)
+	    time_state = TIME_DEL;
+	break;
+
+    case TIME_INS:
+	if (xtime.tv_sec % 86400 == 0) {
+	    xtime.tv_sec--;
+	    wall_to_monotonic.tv_sec++;
+	    /* The timer interpolator will make time change gradually instead
+	     * of an immediate jump by one second.
+	     */
+	    time_interpolator_update(-NSEC_PER_SEC);
+	    time_state = TIME_OOP;
+	    clock_was_set();
+	    printk(KERN_NOTICE "Clock: inserting leap second 23:59:60 UTC\n");
+	}
+	break;
+
+    case TIME_DEL:
+	if ((xtime.tv_sec + 1) % 86400 == 0) {
+	    xtime.tv_sec++;
+	    wall_to_monotonic.tv_sec--;
+	    /* Use of time interpolator for a gradual change of time */
+	    time_interpolator_update(NSEC_PER_SEC);
+	    time_state = TIME_WAIT;
+	    clock_was_set();
+	    printk(KERN_NOTICE "Clock: deleting leap second 23:59:59 UTC\n");
+	}
+	break;
+
+    case TIME_OOP:
+	time_state = TIME_WAIT;
+	break;
+
+    case TIME_WAIT:
+	if (!(time_status & (STA_INS | STA_DEL)))
+	    time_state = TIME_OK;
+    }
+
+    /*
+     * Compute the phase adjustment for the next second. In
+     * PLL mode, the offset is reduced by a fixed factor
+     * times the time constant. In FLL mode the offset is
+     * used directly. In either mode, the maximum phase
+     * adjustment for each second is clamped so as to spread
+     * the adjustment over not more than the number of
+     * seconds between updates.
+     */
+    if (time_offset < 0) {
+	ltemp = -time_offset;
+	if (!(time_status & STA_FLL))
+	    ltemp >>= SHIFT_KG + time_constant;
+	if (ltemp > (MAXPHASE / MINSEC) << SHIFT_UPDATE)
+	    ltemp = (MAXPHASE / MINSEC) << SHIFT_UPDATE;
+	time_offset += ltemp;
+	time_adj = -ltemp << (SHIFT_SCALE - SHIFT_HZ - SHIFT_UPDATE);
+    } else {
+	ltemp = time_offset;
+	if (!(time_status & STA_FLL))
+	    ltemp >>= SHIFT_KG + time_constant;
+	if (ltemp > (MAXPHASE / MINSEC) << SHIFT_UPDATE)
+	    ltemp = (MAXPHASE / MINSEC) << SHIFT_UPDATE;
+	time_offset -= ltemp;
+	time_adj = ltemp << (SHIFT_SCALE - SHIFT_HZ - SHIFT_UPDATE);
+    }
+
+    /*
+     * Compute the frequency estimate and additional phase
+     * adjustment due to frequency error for the next
+     * second. When the PPS signal is engaged, gnaw on the
+     * watchdog counter and update the frequency computed by
+     * the pll and the PPS signal.
+     */
+    pps_valid++;
+    if (pps_valid == PPS_VALID) {	/* PPS signal lost */
+	pps_jitter = MAXTIME;
+	pps_stabil = MAXFREQ;
+	time_status &= ~(STA_PPSSIGNAL | STA_PPSJITTER |
+			 STA_PPSWANDER | STA_PPSERROR);
+    }
+    ltemp = time_freq + pps_freq;
+    if (ltemp < 0)
+	time_adj -= -ltemp >>
+	    (SHIFT_USEC + SHIFT_HZ - SHIFT_SCALE);
+    else
+	time_adj += ltemp >>
+	    (SHIFT_USEC + SHIFT_HZ - SHIFT_SCALE);
+
+#if HZ == 100
+    /* Compensate for (HZ==100) != (1 << SHIFT_HZ).
+     * Add 25% and 3.125% to get 128.125; => only 0.125% error (p. 14)
+     */
+    if (time_adj < 0)
+	time_adj -= (-time_adj >> 2) + (-time_adj >> 5);
+    else
+	time_adj += (time_adj >> 2) + (time_adj >> 5);
+#endif
+#if HZ == 1000
+    /* Compensate for (HZ==1000) != (1 << SHIFT_HZ).
+     * Add 1.5625% and 0.78125% to get 1023.4375; => only 0.05% error (p. 14)
+     */
+    if (time_adj < 0)
+	time_adj -= (-time_adj >> 6) + (-time_adj >> 7);
+    else
+	time_adj += (time_adj >> 6) + (time_adj >> 7);
+#endif
+}
+
+/* in the NTP reference this is called "hardclock()" */
+static void update_wall_time_one_tick(void)
+{
+	long time_adjust_step, delta_nsec;
+
+	if ( (time_adjust_step = time_adjust) != 0 ) {
+	    /* We are doing an adjtime thing. 
+	     *
+	     * Prepare time_adjust_step to be within bounds.
+	     * Note that a positive time_adjust means we want the clock
+	     * to run faster.
+	     *
+	     * Limit the amount of the step to be in the range
+	     * -tickadj .. +tickadj
+	     */
+	     if (time_adjust > tickadj)
+		time_adjust_step = tickadj;
+	     else if (time_adjust < -tickadj)
+		time_adjust_step = -tickadj;
+
+	    /* Reduce by this step the amount of time left  */
+	    time_adjust -= time_adjust_step;
+	}
+	delta_nsec = tick_nsec + time_adjust_step * 1000;
+	/*
+	 * Advance the phase, once it gets to one microsecond, then
+	 * advance the tick more.
+	 */
+	time_phase += time_adj;
+	if (time_phase <= -FINENSEC) {
+		long ltemp = -time_phase >> (SHIFT_SCALE - 10);
+		time_phase += ltemp << (SHIFT_SCALE - 10);
+		delta_nsec -= ltemp;
+	}
+	else if (time_phase >= FINENSEC) {
+		long ltemp = time_phase >> (SHIFT_SCALE - 10);
+		time_phase -= ltemp << (SHIFT_SCALE - 10);
+		delta_nsec += ltemp;
+	}
+	xtime.tv_nsec += delta_nsec;
+	time_interpolator_update(delta_nsec);
+
+	/* Changes by adjtime() do not take effect till next tick. */
+	if (time_next_adjust != 0) {
+		time_adjust = time_next_adjust;
+		time_next_adjust = 0;
+	}
+}
+
+static void update_wall_time(unsigned long ticks)
+{
+	do {
+		ticks--;
+		update_wall_time_one_tick();
+		if (xtime.tv_nsec >= 1000000000) {
+			xtime.tv_nsec -= 1000000000;
+			xtime.tv_sec++;
+			second_overflow();
+		}
+	} while (ticks);
+}
+
+/*
+ * Called from the timer interrupt handler to charge one tick to the current 
+ * process.  user_tick is 1 if the tick is user time, 0 for system.
+ */
+void update_process_times(int user_tick)
+{
+	// @todo timer
+}
+
+static unsigned long count_active_tasks(void)
+{
+	return (nr_running() + nr_uninterruptible()) * FIXED_1;
+}
+
+unsigned long avenrun[3];
+
+static inline void calc_load(unsigned long ticks)
+{
+	unsigned long active_tasks; /* fixed-point */
+	static int count = LOAD_FREQ;
+
+	count -= ticks;
+	if (count < 0) {
+		count += LOAD_FREQ;
+		active_tasks = count_active_tasks();
+		CALC_LOAD(avenrun[0], EXP_1, active_tasks);
+		CALC_LOAD(avenrun[1], EXP_5, active_tasks);
+		CALC_LOAD(avenrun[2], EXP_15, active_tasks);
+	}
+}
+
+/* jiffies at the most recent update of wall time */
+unsigned long wall_jiffies = INITIAL_JIFFIES;
+
 /*
  * This read-write spinlock protects us from races in SMP while
  * playing with xtime and avenrun.
@@ -316,6 +574,29 @@ static void run_timer_softirq(struct softirq_action *h)
 
 	if (time_after_eq(jiffies, base->timer_jiffies))
 		__run_timers(base);
+}
+
+static inline void update_times(void) {
+	unsigned long ticks;
+
+	ticks = jiffies - wall_jiffies;
+	if (ticks) {
+		wall_jiffies += ticks;
+		update_wall_time(ticks);
+	}
+	calc_load(ticks);
+}
+
+/*
+ * The 64-bit jiffies value is not atomic - you MUST NOT read it
+ * without sampling the sequence number in xtime_lock.
+ * jiffies is defined in the linker script...
+ */
+
+void do_timer(struct pt_regs *regs)
+{
+	jiffies_64++;
+	update_times();
 }
 
 static void __devinit init_timers_cpu(int cpu) {

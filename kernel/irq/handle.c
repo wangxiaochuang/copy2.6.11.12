@@ -63,3 +63,103 @@ irqreturn_t no_action(int cpl, void *dev_id, struct pt_regs *regs)
 {
 	return IRQ_NONE;
 }
+
+/*
+ * Have got an event to handle:
+ */
+fastcall int handle_IRQ_event(unsigned int irq, struct pt_regs *regs,
+				struct irqaction *action)
+{
+	int ret, retval = 0, status = 0;
+
+	if (!(action->flags & SA_INTERRUPT))
+		local_irq_enable();
+
+	do {
+		ret = action->handler(irq, action->dev_id, regs);
+		if (ret == IRQ_HANDLED)
+			status |= action->flags;
+		retval |= ret;
+		action = action->next;
+	} while (action);
+
+	if (status & SA_SAMPLE_RANDOM)
+		add_interrupt_randomness(irq);
+	local_irq_disable();
+
+	return retval;
+}
+
+/*
+ * do_IRQ handles all normal device IRQ's (the special
+ * SMP cross-CPU interrupts have their own specific
+ * handlers).
+ */
+fastcall unsigned int __do_IRQ(unsigned int irq, struct pt_regs *regs)
+{
+	irq_desc_t *desc = irq_desc + irq;
+	struct irqaction * action;
+	unsigned int status;
+
+	kstat_this_cpu.irqs[irq]++;
+	if (desc->status & IRQ_PER_CPU) {
+		irqreturn_t action_ret;
+
+		desc->handler->ack(irq);
+		action_ret = handle_IRQ_event(irq, regs, desc->action);
+		if (!noirqdebug)
+			note_interrupt(irq, desc, action_ret);
+		desc->handler->end(irq);
+		return 1;
+	}
+
+	spin_lock(&desc->lock);
+	desc->handler->ack(irq);
+	/*
+	 * REPLAY is when Linux resends an IRQ that was dropped earlier
+	 * WAITING is used by probe to mark irqs that are being tested
+	 */
+	status = desc->status & ~(IRQ_REPLAY | IRQ_WAITING);
+	status |= IRQ_PENDING; /* we _want_ to handle it */
+
+	/*
+	 * If the IRQ is disabled for whatever reason, we cannot
+	 * use the action we have.
+	 */
+	action = NULL;
+	if (likely(!(status & (IRQ_DISABLED | IRQ_INPROGRESS)))) {
+		action = desc->action;
+		status &= ~IRQ_PENDING;
+		status |= IRQ_INPROGRESS;
+	}
+	desc->status = status;
+
+	if (unlikely(!action))
+		goto out;
+
+	for (;;) {
+		irqreturn_t action_ret;
+
+		spin_unlock(&desc->lock);
+
+		action_ret = handle_IRQ_event(irq, regs, action);
+
+		spin_lock(&desc->lock);
+		if (!noirqdebug)
+			note_interrupt(irq, desc, action_ret);
+		if (likely(!(desc->status & IRQ_PENDING)))
+			break;
+		desc->status &= ~IRQ_PENDING;
+	}
+	desc->status &= ~IRQ_INPROGRESS;
+
+out:
+	/*
+	 * The ->end() handler has to deal with interrupts which got
+	 * disabled while the handler was running.
+	 */
+	desc->handler->end(irq);
+	spin_unlock(&desc->lock);
+
+	return 1;
+}

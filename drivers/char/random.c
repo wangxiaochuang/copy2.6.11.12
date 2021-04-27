@@ -21,6 +21,9 @@
 #include <asm/irq.h>
 #include <asm/io.h>
 
+void add_interrupt_randomness(int irq) {
+}
+
 void rand_initialize_irq(int irq) {
 
 }

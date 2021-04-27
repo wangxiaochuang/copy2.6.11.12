@@ -64,6 +64,13 @@ void __init apic_intr_init(void)
 #endif
 }
 
+/* Using APIC to generate smp_local_timer_interrupt? */
+int using_apic_timer = 0;
+
+static DEFINE_PER_CPU(int, prof_multiplier) = 1;
+static DEFINE_PER_CPU(int, prof_old_multiplier) = 1;
+static DEFINE_PER_CPU(int, prof_counter) = 1;
+
 int get_physical_broadcast(void)
 {
 	unsigned int lvr, version;
@@ -242,6 +249,63 @@ fake_ioapic_page:
 #endif
 }
 
+#define APIC_DIVISOR 16
+
+void __setup_APIC_LVTT(unsigned int clocks)
+{
+	unsigned int lvtt_value, tmp_value, ver;
+
+	ver = GET_APIC_VERSION(apic_read(APIC_LVR));
+	lvtt_value = APIC_LVT_TIMER_PERIODIC | LOCAL_TIMER_VECTOR;
+	if (!APIC_INTEGRATED(ver))
+		lvtt_value |= SET_APIC_TIMER_BASE(APIC_TIMER_BASE_DIV);
+	apic_write_around(APIC_LVTT, lvtt_value);
+
+	/*
+	 * Divide PICLK by 16
+	 */
+	tmp_value = apic_read(APIC_TDCR);
+	apic_write_around(APIC_TDCR, (tmp_value
+				& ~(APIC_TDR_DIV_1 | APIC_TDR_DIV_TMBASE))
+				| APIC_TDR_DIV_16);
+
+	apic_write_around(APIC_TMICT, clocks/APIC_DIVISOR);
+}
+
+static unsigned int calibration_result;
+
+#undef APIC_DIVISOR
+
+inline void smp_local_timer_interrupt(struct pt_regs * regs)
+{
+	int cpu = smp_processor_id();
+
+	profile_tick(CPU_PROFILING, regs);
+	if (--per_cpu(prof_counter, cpu) <= 0) {
+		/*
+		 * The multiplier may have changed since the last time we got
+		 * to this point as a result of the user writing to
+		 * /proc/profile. In this case we need to adjust the APIC
+		 * timer accordingly.
+		 *
+		 * Interrupts are already masked off at this point.
+		 */
+		per_cpu(prof_counter, cpu) = per_cpu(prof_multiplier, cpu);
+		if (per_cpu(prof_counter, cpu) !=
+					per_cpu(prof_old_multiplier, cpu)) {
+			__setup_APIC_LVTT(
+					calibration_result/
+					per_cpu(prof_counter, cpu));
+			per_cpu(prof_old_multiplier, cpu) =
+						per_cpu(prof_counter, cpu);
+		}
+
+#ifdef CONFIG_SMP
+		update_process_times(user_mode(regs));
+#endif
+	}
+}
+
 /*
  * Local APIC timer interrupt. This is the most natural way for doing
  * local interrupts, but local timer interrupts can be emulated by
@@ -253,7 +317,7 @@ fake_ioapic_page:
 
 fastcall void smp_apic_timer_interrupt(struct pt_regs *regs)
 {
-	printk(" arch i386 kernel apic.c 256\n");
+	panic(" arch i386 kernel apic.c 256\n");
 }
 
 /*
