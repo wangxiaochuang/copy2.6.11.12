@@ -8,7 +8,7 @@
 # 	    signal.o sys.o kmod.o workqueue.o pid.o \
 # 	    rcupdate.o intermodule.o extable.o params.o posix-timers.o \
 # 	    kthread.o wait.o kfifo.o sys_ni.o
-obj-y = sched.o exec_domain.o panic.o printk.o profile.o \
+obj-y = sched.o fork.o exec_domain.o panic.o printk.o profile.o \
 		exit.o itimer.o time.o softirq.o resource.o \
 		timer.o user.o \
 		signal.o sys.o workqueue.o pid.o \

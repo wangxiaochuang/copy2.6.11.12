@@ -295,5 +295,19 @@ asmlinkage void __init start_kernel(void) {
 	calibrate_delay();
 	pidmap_init();
 	pgtable_cache_init();
+	prio_tree_init();
+	anon_vma_init();
+#ifdef CONFIG_X86
+	if (efi_enabled)
+		panic("efi enabled");
+#endif
+	fork_init(num_physpages);
+	proc_caches_init();
+	buffer_init();
+	unnamed_dev_init();
+	security_init();
+	vfs_caches_init(num_physpages);
+	// radix_tree_init();
+	// signals_init();
     for(;;);
 }

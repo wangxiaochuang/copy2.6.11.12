@@ -49,6 +49,39 @@ struct scan_control {
 	int may_writepage;
 };
 
+/*
+ * The list of shrinker callbacks used by to apply pressure to
+ * ageable caches.
+ */
+struct shrinker {
+	shrinker_t		shrinker;
+	struct list_head	list;
+	int			seeks;	/* seeks to recreate an obj */
+	long			nr;	/* objs pending delete */
+};
+
+static LIST_HEAD(shrinker_list);
+static DECLARE_RWSEM(shrinker_rwsem);
+
+/*
+ * Add a shrinker callback to be called from the vm
+ */
+struct shrinker *set_shrinker(int seeks, shrinker_t theshrinker)
+{
+	struct shrinker *shrinker;
+
+	shrinker = kmalloc(sizeof(*shrinker), GFP_KERNEL);
+	if (shrinker) {
+	        shrinker->shrinker = theshrinker;
+	        shrinker->seeks = seeks;
+	        shrinker->nr = 0;
+	        down_write(&shrinker_rwsem);
+	        list_add(&shrinker->list, &shrinker_list);
+	        up_write(&shrinker_rwsem);
+	}
+	return shrinker;
+}
+
 int try_to_free_pages(struct zone **zones,
 		unsigned int gfp_mask, unsigned int order)
 {

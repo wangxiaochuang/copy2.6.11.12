@@ -685,6 +685,56 @@ unsigned int nr_free_pages(void)
 
 EXPORT_SYMBOL(nr_free_pages);
 
+static unsigned int nr_free_zone_pages(int offset)
+{
+	pg_data_t *pgdat;
+	unsigned int sum = 0;
+
+	for_each_pgdat(pgdat) {
+		struct zonelist *zonelist = pgdat->node_zonelists + offset;
+		struct zone **zonep = zonelist->zones;
+		struct zone *zone;
+
+		for (zone = *zonep++; zone; zone = *zonep++) {
+			unsigned long size = zone->present_pages;
+			unsigned long high = zone->pages_high;
+			if (size > high)
+				sum += size - high;
+		}
+	}
+
+	return sum;
+}
+
+/*
+ * Amount of free RAM allocatable within ZONE_DMA and ZONE_NORMAL
+ */
+unsigned int nr_free_buffer_pages(void)
+{
+	return nr_free_zone_pages(GFP_USER & GFP_ZONEMASK);
+}
+
+/*
+ * Amount of free RAM allocatable within all zones
+ */
+unsigned int nr_free_pagecache_pages(void)
+{
+	return nr_free_zone_pages(GFP_HIGHUSER & GFP_ZONEMASK);
+}
+
+#ifdef CONFIG_HIGHMEM
+unsigned int nr_free_highpages (void)
+{
+	pg_data_t *pgdat;
+	unsigned int pages = 0;
+
+	for_each_pgdat(pgdat)
+		pages += pgdat->node_zones[ZONE_HIGHMEM].free_pages;
+
+	return pages;
+}
+#endif
+
 /*
  * Accumulate the page_state information across all CPUs.
  * The result is unavoidably approximate - it can change

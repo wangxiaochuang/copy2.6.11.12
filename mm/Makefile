@@ -7,7 +7,7 @@ mmu-y			:= nommu.o
 # 			   mlock.o mmap.o mprotect.o mremap.o msync.o rmap.o \
 # 			   vmalloc.o
 mmu-$(CONFIG_MMU)	:= highmem.o memory.o \
-				vmalloc.o
+				vmalloc.o rmap.o
 
 # obj-y			:= bootmem.o filemap.o mempool.o oom_kill.o fadvise.o \
 #			   page_alloc.o page-writeback.o pdflush.o \
