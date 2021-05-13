@@ -29,8 +29,8 @@ extern unsigned long max_pfn;
 typedef struct bootmem_data {
 	// 当前pgdat的开始位置，如果只有一个pgdat，那么就是0
 	unsigned long node_boot_start;
-	unsigned long node_low_pfn;
-	// 数组每个元素是4个字节，每一位表示4k（页），一个元素32k
+	unsigned long node_low_pfn;	// 896M
+	// 物理内存是否空闲的位标识，从init_pg_tables_end开始，转为虚拟地址
 	void *node_bootmem_map;
 	unsigned long last_offset;
 	unsigned long last_pos;

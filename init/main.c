@@ -271,7 +271,7 @@ asmlinkage void __init start_kernel(void) {
 	pidhash_init();
 	init_timers();
 	softirq_init();
-	time_init();
+	time_init();	// 时钟中断相关
 
 	/*
 	 * HACK ALERT! This is early. We're enabling the console before

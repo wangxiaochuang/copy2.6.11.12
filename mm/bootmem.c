@@ -42,7 +42,7 @@ static unsigned long __init init_bootmem_core (pg_data_t *pgdat,
 	bdata->node_boot_start = (start << PAGE_SHIFT);
 	bdata->node_low_pfn = end;
 
-	memset(bdata->node_bootmem_map, 0xff, mapsize);
+	memset(bdata->node_bootmem_map, 0xff, mapsize); // 初始化为1标识保留
 	return mapsize;
 }
 

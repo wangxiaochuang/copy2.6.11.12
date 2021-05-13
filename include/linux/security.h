@@ -1921,9 +1921,9 @@ extern int mod_unreg_security	(const char *name, struct security_operations *ops
  * are just stubbed out, but a few must call the proper capable code.
  */
 
-static inline int security_init(void)
-{
-	return 0;
+// static inline int security_init(void)
+// {
+// 	return 0;
 }
 
 static inline int security_ptrace (struct task_struct *parent, struct task_struct * child)

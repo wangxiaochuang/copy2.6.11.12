@@ -790,6 +790,9 @@ static void __init build_zonelists(pg_data_t *pgdat) {
 
 	local_node = pgdat->node_id;
 
+	// node_zonelists[0] => normal dma
+	// node_zonelists[1] => dma
+	// node_zonelists[2] => high normal dma
 	for (i = 0; i < GFP_ZONETYPES; i++) {
 		struct zonelist *zonelist;	
 
