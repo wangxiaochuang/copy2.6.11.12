@@ -43,6 +43,15 @@ unsigned long simple_strtoul(const char *cp,char **endp,unsigned int base)
 
 EXPORT_SYMBOL(simple_strtoul);
 
+long simple_strtol(const char *cp,char **endp,unsigned int base)
+{
+	if(*cp=='-')
+		return -simple_strtoul(cp+1,endp,base);
+	return simple_strtoul(cp,endp,base);
+}
+
+EXPORT_SYMBOL(simple_strtol);
+
 /**
  * simple_strtoull - convert a string to an unsigned long long
  * @cp: The start of the string

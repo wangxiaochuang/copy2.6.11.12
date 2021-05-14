@@ -19,8 +19,10 @@ static struct list_head df_list = LIST_HEAD_INIT(df_list);
 
 int change_page_attr(struct page *page, int numpages, pgprot_t prot)
 {
+    panic("in change_page_attr function");
 }
 
 void global_flush_tlb(void)
 { 
+    panic("in change_page_attr function");
 }

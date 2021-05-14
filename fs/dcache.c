@@ -154,6 +154,9 @@ kmem_cache_t *names_cachep;
 /* SLAB cache for file structures */
 kmem_cache_t *filp_cachep;
 
+extern void bdev_cache_init(void);
+extern void chrdev_init(void);
+
 void __init vfs_caches_init_early(void)
 {
 	dcache_init_early();

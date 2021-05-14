@@ -334,6 +334,7 @@ static struct page *__rmqueue(struct zone *zone, unsigned int order)
 		zone->free_pages -= 1UL << order;
 		return expand(zone, page, order, current_order, area);
 	}
+	return NULL;
 }
 
 static int rmqueue_bulk(struct zone *zone, unsigned int order, 

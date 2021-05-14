@@ -17,6 +17,10 @@
 #include <linux/kobject.h>
 #include <asm/uaccess.h>
 
+void get_filesystem(struct file_system_type *fs);
+void put_filesystem(struct file_system_type *fs);
+struct file_system_type *get_fs_type(const char *name);
+
 LIST_HEAD(super_blocks);
 DEFINE_SPINLOCK(sb_lock);
 

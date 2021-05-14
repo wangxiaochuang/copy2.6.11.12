@@ -48,3 +48,19 @@ int __init security_init(void)
 
 	return 0;
 }
+
+int register_security(struct security_operations *ops)
+{
+	if (verify(ops)) {
+		printk(KERN_DEBUG "%s could not verify "
+		       "security_operations structure.\n", __FUNCTION__);
+		return -EINVAL;
+	}
+
+	if (security_ops != &dummy_security_ops)
+		return -EAGAIN;
+
+	security_ops = ops;
+
+	return 0;
+}
