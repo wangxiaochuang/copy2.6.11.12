@@ -242,6 +242,30 @@ void fastcall __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
 	__wake_up_common(q, mode, 1, 0, NULL);
 }
 
+void fastcall complete(struct completion *x)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&x->wait.lock, flags);
+	x->done++;
+	__wake_up_common(&x->wait, TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE,
+			 1, 0, NULL);
+	spin_unlock_irqrestore(&x->wait.lock, flags);
+}
+EXPORT_SYMBOL(complete);
+
+void fastcall __sched wait_for_completion(struct completion *x)
+{
+	panic("in wait_for_completion function");
+}
+EXPORT_SYMBOL(wait_for_completion);
+
+asmlinkage long sys_sched_yield(void)
+{
+	panic("in sys_sched_yield function");
+	return 0;
+}
+
 static inline void __cond_resched(void)
 {
 	do {
@@ -261,6 +285,14 @@ int __sched cond_resched(void)
 }
 
 EXPORT_SYMBOL(cond_resched);
+
+void __sched yield(void)
+{
+	set_current_state(TASK_RUNNING);
+	sys_sched_yield();
+}
+
+EXPORT_SYMBOL(yield);
 
 void __devinit init_idle(task_t *idle, int cpu) {
 	runqueue_t *rq = cpu_rq(cpu);

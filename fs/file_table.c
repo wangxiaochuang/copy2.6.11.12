@@ -41,6 +41,31 @@ void filp_dtor(void * objp, struct kmem_cache_s *cachep, unsigned long dflags)
 	spin_unlock_irqrestore(&filp_count_lock, flags);
 }
 
+int fs_may_remount_ro(struct super_block *sb)
+{
+	struct list_head *p;
+
+	/* Check that no files are currently opened for writing. */
+	file_list_lock();
+	list_for_each(p, &sb->s_files) {
+		struct file *file = list_entry(p, struct file, f_list);
+		struct inode *inode = file->f_dentry->d_inode;
+
+		/* File with pending delete? */
+		if (inode->i_nlink == 0)
+			goto too_bad;
+
+		/* Writeable file? */
+		if (S_ISREG(inode->i_mode) && (file->f_mode & FMODE_WRITE))
+			goto too_bad;
+	}
+	file_list_unlock();
+	return 1; /* Tis' cool bro. */
+too_bad:
+	file_list_unlock();
+	return 0;
+}
+
 void __init files_init(unsigned long mempages)
 {
 	int n; 

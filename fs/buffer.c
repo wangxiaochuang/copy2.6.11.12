@@ -20,6 +20,12 @@
 #include <linux/cpu.h>
 #include <linux/bitops.h>
 
+int fsync_super(struct super_block *sb)
+{
+	panic("in fsync_super function");
+	return 0;
+}
+
 /*
  * Buffer-head allocation
  */

@@ -19,19 +19,73 @@
 
 int sysctl_vfs_cache_pressure = 100;
 
+__cacheline_aligned_in_smp DEFINE_SPINLOCK(dcache_lock);
+
+EXPORT_SYMBOL(dcache_lock);
+
 static kmem_cache_t *dentry_cache;
 
 static unsigned int d_hash_mask;
 static unsigned int d_hash_shift;
+
 static struct hlist_head *dentry_hashtable;
+static LIST_HEAD(dentry_unused);
 
 /* Statistics gathering. */
 struct dentry_stat_t dentry_stat = {
 	.age_limit = 45,
 };
 
+static inline void prune_one_dentry(struct dentry * dentry)
+{
+	panic("in prune_one_dentry function");
+}
+
 static void prune_dcache(int count)
 {
+	panic("in prune_dcache function");
+}
+
+void shrink_dcache_sb(struct super_block * sb)
+{
+	struct list_head *tmp, *next;
+	struct dentry *dentry;
+
+	/*
+	 * Pass one ... move the dentries for the specified
+	 * superblock to the most recent end of the unused list.
+	 */
+	spin_lock(&dcache_lock);
+	next = dentry_unused.next;
+	while (next != &dentry_unused) {
+		tmp = next;
+		next = tmp->next;
+		dentry = list_entry(tmp, struct dentry, d_lru);
+		if (dentry->d_sb != sb)
+			continue;
+		list_del(tmp);
+		list_add(tmp, &dentry_unused);
+	}
+
+repeat:
+	next = dentry_unused.next;
+	while (next != &dentry_unused) {
+		tmp = next;
+		next = tmp->next;
+		dentry = list_entry(tmp, struct dentry, d_lru);
+		if (dentry->d_sb != sb)
+			continue;
+		dentry_stat.nr_unused--;
+		list_del_init(tmp);
+		spin_lock(&dentry->d_lock);
+		if (atomic_read(&dentry->d_count)) {
+			spin_unlock(&dentry->d_lock);
+			continue;
+		}
+		prune_one_dentry(dentry);
+		goto repeat;
+	}
+	spin_unlock(&dcache_lock);
 }
 
 static int shrink_dcache_memory(int nr, unsigned int gfp_mask)

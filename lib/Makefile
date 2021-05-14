@@ -21,9 +21,9 @@ lib-$(CONFIG_RWSEM_XCHGADD_ALGORITHM) += rwsem.o
 # lib-$(CONFIG_GENERIC_FIND_NEXT_BIT) += find_next_bit.o
 obj-$(CONFIG_LOCK_KERNEL) += kernel_lock.o
 
-# ifneq ($(CONFIG_HAVE_DEC_LOCK),y) 
-#   lib-y += dec_and_lock.o
-# endif
+ifneq ($(CONFIG_HAVE_DEC_LOCK),y) 
+  lib-y += dec_and_lock.o
+endif
 
 # obj-$(CONFIG_CRC_CCITT)	+= crc-ccitt.o
 # obj-$(CONFIG_CRC32)	+= crc32.o

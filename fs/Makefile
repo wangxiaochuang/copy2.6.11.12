@@ -14,7 +14,7 @@
 obj-y := open.o file_table.o buffer.o super.o \
 		block_dev.o char_dev.o \
 		dcache.o inode.o \
-		namespace.o
+		filesystems.o namespace.o
 
 # obj-$(CONFIG_EPOLL)		+= eventpoll.o
 # obj-$(CONFIG_COMPAT)		+= compat.o
@@ -37,7 +37,7 @@ obj-y := open.o file_table.o buffer.o super.o \
 # obj-$(CONFIG_FS_MBCACHE)	+= mbcache.o
 # obj-$(CONFIG_FS_POSIX_ACL)	+= posix_acl.o xattr_acl.o
 # 
-# obj-$(CONFIG_QUOTA)		+= dquot.o
+obj-$(CONFIG_QUOTA)		+= dquot.o
 # obj-$(CONFIG_QFMT_V1)		+= quota_v1.o
 # obj-$(CONFIG_QFMT_V2)		+= quota_v2.o
 # obj-$(CONFIG_QUOTACTL)		+= quota.o

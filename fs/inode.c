@@ -85,7 +85,7 @@ static void init_once(void * foo, kmem_cache_t * cachep, unsigned long flags)
 
 static void prune_icache(int nr_to_scan)
 {
-	panic("in prune_icache");
+	panic("in prune_icache function");
 }
 
 static int shrink_icache_memory(int nr, unsigned int gfp_mask)

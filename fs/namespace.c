@@ -27,6 +27,35 @@ static struct list_head *mount_hashtable;
 static int hash_mask, hash_bits;
 static kmem_cache_t *mnt_cache;
 
+struct vfsmount *alloc_vfsmnt(const char *name)
+{
+	struct vfsmount *mnt = kmem_cache_alloc(mnt_cache, GFP_KERNEL);
+	if (mnt) {
+		memset(mnt, 0, sizeof(struct vfsmount));
+		atomic_set(&mnt->mnt_count, 1);
+		INIT_LIST_HEAD(&mnt->mnt_hash);
+		INIT_LIST_HEAD(&mnt->mnt_child);
+		INIT_LIST_HEAD(&mnt->mnt_mounts);
+		INIT_LIST_HEAD(&mnt->mnt_list);
+		INIT_LIST_HEAD(&mnt->mnt_fslink);
+		if (name) {
+			int size = strlen(name)+1;
+			char *newname = kmalloc(size, GFP_KERNEL);
+			if (newname) {
+				memcpy(newname, name, size);
+				mnt->mnt_devname = newname;
+			}
+		}
+	}
+	return mnt;
+}
+
+void free_vfsmnt(struct vfsmount *mnt)
+{
+	kfree(mnt->mnt_devname);
+	kmem_cache_free(mnt_cache, mnt);
+}
+
 static void __init init_mount_tree(void)
 {
     panic("in init_mount_tree");

@@ -378,6 +378,15 @@ static void cache_estimate (unsigned long gfporder, size_t size, size_t align,
 	*left_over = wastage;
 }
 
+#define slab_error(cachep, msg) __slab_error(__FUNCTION__, cachep, msg)
+
+static void __slab_error(const char *function, kmem_cache_t *cachep, char *msg)
+{
+	printk(KERN_ERR "slab error in %s(): cache `%s': %s\n",
+		function, cachep->name, msg);
+	dump_stack();
+}
+
 static void __devinit start_cpu_timer(int cpu)
 {
 	struct work_struct *reap_work = &per_cpu(reap_work, cpu);
@@ -933,6 +942,111 @@ static void smp_call_function_all_cpus(void (*func) (void *arg), void *arg)
 #define cache_free_debugcheck(x,objp,z) (objp)
 #define check_slabp(x,y) do { } while(0)
 #endif
+
+static void drain_array_locked(kmem_cache_t* cachep,
+				struct array_cache *ac, int force);
+
+static void do_drain(void *arg)
+{
+	kmem_cache_t *cachep = (kmem_cache_t*)arg;
+	struct array_cache *ac;
+
+	check_irq_off();
+	ac = ac_data(cachep);
+	spin_lock(&cachep->spinlock);
+	free_block(cachep, &ac_entry(ac)[0], ac->avail);
+	spin_unlock(&cachep->spinlock);
+	ac->avail = 0;
+}
+
+static void drain_cpu_caches(kmem_cache_t *cachep)
+{
+	smp_call_function_all_cpus(do_drain, cachep);
+	check_irq_on();
+	spin_lock_irq(&cachep->spinlock);
+	if (cachep->lists.shared)
+		drain_array_locked(cachep, cachep->lists.shared, 1);
+	spin_unlock_irq(&cachep->spinlock);
+}
+
+static int __cache_shrink(kmem_cache_t *cachep)
+{
+	struct slab *slabp;
+	int ret;
+
+	drain_cpu_caches(cachep);
+
+	check_irq_on();
+	spin_lock_irq(&cachep->spinlock);
+
+	for(;;) {
+		struct list_head *p;
+
+		p = cachep->lists.slabs_free.prev;
+		if (p == &cachep->lists.slabs_free)
+			break;
+
+		slabp = list_entry(cachep->lists.slabs_free.prev, struct slab, list);
+#if DEBUG
+		if (slabp->inuse)
+			BUG();
+#endif
+		list_del(&slabp->list);
+
+		cachep->lists.free_objects -= cachep->num;
+		spin_unlock_irq(&cachep->spinlock);
+		slab_destroy(cachep, slabp);
+		spin_lock_irq(&cachep->spinlock);
+	}
+	ret = !list_empty(&cachep->lists.slabs_full) ||
+		!list_empty(&cachep->lists.slabs_partial);
+	spin_unlock_irq(&cachep->spinlock);
+	return ret;
+}
+
+int kmem_cache_destroy (kmem_cache_t * cachep)
+{
+	int i;
+
+	if (!cachep || in_interrupt())
+		BUG();
+
+	/* Don't let CPUs to come and go */
+	lock_cpu_hotplug();
+
+	/* Find the cache in the chain of caches. */
+	down(&cache_chain_sem);
+	/*
+	 * the chain is never empty, cache_cache is never destroyed
+	 */
+	list_del(&cachep->next);
+	up(&cache_chain_sem);
+
+	if (__cache_shrink(cachep)) {
+		slab_error(cachep, "Can't free all objects");
+		down(&cache_chain_sem);
+		list_add(&cachep->next,&cache_chain);
+		up(&cache_chain_sem);
+		unlock_cpu_hotplug();
+		return 1;
+	}
+
+	if (unlikely(cachep->flags & SLAB_DESTROY_BY_RCU))
+		synchronize_kernel();
+
+	for (i = 0; i < NR_CPUS; i++)
+		kfree(cachep->array[i]);
+
+	kfree(cachep->lists.shared);
+	cachep->lists.shared = NULL;
+	kmem_cache_free(&cache_cache, cachep);
+
+	unlock_cpu_hotplug();
+
+	return 0;
+}
+
+EXPORT_SYMBOL(kmem_cache_destroy);
 
 /* Get the memory for a slab management obj. */
 static struct slab* alloc_slabmgmt (kmem_cache_t *cachep,
@@ -1494,6 +1608,26 @@ static void enable_cpucache (kmem_cache_t *cachep)
 	if (err)
 		printk(KERN_ERR "enable_cpucache failed for %s, error %d.\n",
 					cachep->name, -err);
+}
+
+static void drain_array_locked(kmem_cache_t *cachep,
+				struct array_cache *ac, int force)
+{
+	int tofree;
+
+	check_spinlock_acquired(cachep);
+	if (ac->touched && !force) {
+		ac->touched = 0;
+	} else if (ac->avail) {
+		tofree = force ? ac->avail : (ac->limit+4)/5;
+		if (tofree > ac->avail) {
+			tofree = (ac->avail+1)/2;
+		}
+		free_block(cachep, ac_entry(ac), tofree);
+		ac->avail -= tofree;
+		memmove(&ac_entry(ac)[0], &ac_entry(ac)[tofree],
+					sizeof(void*)*ac->avail);
+	}
 }
 
 static void cache_reap(void *unused)
