@@ -23,9 +23,24 @@
 
 #include <asm/uaccess.h>
 
+static DEFINE_SPINLOCK(dq_list_lock);
+DEFINE_SPINLOCK(dq_data_lock);
+
+struct dqstats dqstats;
+
+static void dqput(struct dquot *dquot);
+
 int dquot_mark_dquot_dirty(struct dquot *dquot)
 {
     return 0;
+}
+
+static inline int clear_dquot_dirty(struct dquot *dquot)
+{
+	if (!test_and_clear_bit(DQ_MOD_B, &dquot->dq_flags))
+		return 0;
+	list_del_init(&dquot->dq_dirty);
+	return 1;
 }
 
 int dquot_acquire(struct dquot *dquot)
@@ -45,7 +60,54 @@ int dquot_release(struct dquot *dquot)
 
 int vfs_quota_sync(struct super_block *sb, int type)
 {
-    return 0;
+    struct list_head *dirty;
+	struct dquot *dquot;
+	struct quota_info *dqopt = sb_dqopt(sb);
+	int cnt;
+
+	down(&dqopt->dqonoff_sem);
+	for (cnt = 0; cnt < MAXQUOTAS; cnt++) {
+		if (type != -1 && cnt != type)
+			continue;
+		if (!sb_has_quota_enabled(sb, cnt))
+			continue;
+		spin_lock(&dq_list_lock);
+		dirty = &dqopt->info[cnt].dqi_dirty_list;
+		while (!list_empty(dirty)) {
+			dquot = list_entry(dirty->next, struct dquot, dq_dirty);
+			/* Dirty and inactive can be only bad dquot... */
+			if (!test_bit(DQ_ACTIVE_B, &dquot->dq_flags)) {
+				clear_dquot_dirty(dquot);
+				continue;
+			}
+			/* Now we have active dquot from which someone is
+ 			 * holding reference so we can safely just increase
+			 * use count */
+			atomic_inc(&dquot->dq_count);
+			dqstats.lookups++;
+			spin_unlock(&dq_list_lock);
+			sb->dq_op->write_dquot(dquot);
+			dqput(dquot);
+			spin_lock(&dq_list_lock);
+		}
+		spin_unlock(&dq_list_lock);
+	}
+
+	for (cnt = 0; cnt < MAXQUOTAS; cnt++)
+		if ((cnt == type || type == -1) && sb_has_quota_enabled(sb, cnt)
+			&& info_dirty(&dqopt->info[cnt]))
+			sb->dq_op->write_info(sb, cnt);
+	spin_lock(&dq_list_lock);
+	dqstats.syncs++;
+	spin_unlock(&dq_list_lock);
+	up(&dqopt->dqonoff_sem);
+
+	return 0;
+}
+
+static void dqput(struct dquot *dquot)
+{
+    panic("in dqput function");
 }
 
 int dquot_initialize(struct inode *inode, int type)

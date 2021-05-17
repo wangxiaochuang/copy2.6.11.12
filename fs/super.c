@@ -122,6 +122,47 @@ static int grab_super(struct super_block *s)
 	return 0;
 }
 
+void generic_shutdown_super(struct super_block *sb)
+{
+	struct dentry *root = sb->s_root;
+	struct super_operations *sop = sb->s_op;
+
+	if (root) {
+		sb->s_root = NULL;
+		shrink_dcache_parent(root);
+		shrink_dcache_anon(&sb->s_anon);
+		dput(root);
+		fsync_super(sb);
+		lock_super(sb);
+		sb->s_flags &= ~MS_ACTIVE;
+		/* bad name - it should be evict_inodes() */
+		invalidate_inodes(sb);
+		lock_kernel();
+
+		if (sop->write_super && sb->s_dirt)
+			sop->write_super(sb);
+		if (sop->put_super)
+			sop->put_super(sb);
+
+		/* Forget any remaining inodes */
+		if (invalidate_inodes(sb)) {
+			printk("VFS: Busy inodes after unmount. "
+			   "Self-destruct in 5 seconds.  Have a nice day...\n");
+		}
+
+		unlock_kernel();
+		unlock_super(sb);
+	}
+	spin_lock(&sb_lock);
+	/* should be initialized for __put_super_and_need_restart() */
+	list_del_init(&sb->s_list);
+	list_del(&sb->s_instances);
+	spin_unlock(&sb_lock);
+	up_write(&sb->s_umount);
+}
+
+EXPORT_SYMBOL(generic_shutdown_super);
+
 /**
  *	sget	-	find or create a superblock
  *	@type:	filesystem type superblock should belong to
@@ -176,6 +217,12 @@ retry:
 
 EXPORT_SYMBOL(sget);
 
+void drop_super(struct super_block *sb)
+{
+	up_read(&sb->s_umount);
+	put_super(sb);
+}
+
 static void mark_files_ro(struct super_block *sb)
 {
 	struct file *f;
@@ -227,9 +274,43 @@ static DEFINE_SPINLOCK(unnamed_dev_lock);/* protects the above */
 
 int set_anon_super(struct super_block *s, void *data)
 {
-	panic("in set_anon_super");
+	int dev;
+	int error;
+retry:
+	if (idr_pre_get(&unnamed_dev_idr, GFP_ATOMIC) == 0)
+		return -ENOMEM;
+	spin_lock(&unnamed_dev_lock);
+	error = idr_get_new(&unnamed_dev_idr, NULL, &dev);
+	spin_unlock(&unnamed_dev_lock);
+	if (error == -EAGAIN)
+		/* We raced and lost with another CPU. */
+		goto retry;
+	else if (error)
+		return -EAGAIN;
+
+	if ((dev & MAX_ID_MASK) == (1 << MINORBITS)) {
+		spin_lock(&unnamed_dev_lock);
+		idr_remove(&unnamed_dev_idr, dev);
+		spin_unlock(&unnamed_dev_lock);
+		return -EMFILE;
+	}
+	s->s_dev = MKDEV(0, dev & MINORMASK);
 	return 0;
 }
+
+EXPORT_SYMBOL(set_anon_super);
+
+void kill_anon_super(struct super_block *sb)
+{
+	int slot = MINOR(sb->s_dev);
+
+	generic_shutdown_super(sb);
+	spin_lock(&unnamed_dev_lock);
+	idr_remove(&unnamed_dev_idr, slot);
+	spin_unlock(&unnamed_dev_lock);
+}
+
+EXPORT_SYMBOL(kill_anon_super);
 
 void __init unnamed_dev_init(void)
 {
@@ -242,6 +323,30 @@ void kill_litter_super(struct super_block *sb)
 }
 
 EXPORT_SYMBOL(kill_litter_super);
+
+struct super_block *get_sb_nodev(struct file_system_type *fs_type,
+	int flags, void *data,
+	int (*fill_super)(struct super_block *, void *, int))
+{
+	int error;
+	struct super_block *s = sget(fs_type, NULL, set_anon_super, NULL);
+
+	if (IS_ERR(s))
+		return s;
+
+	s->s_flags = flags;
+
+	error = fill_super(s, data, flags & MS_VERBOSE ? 1 : 0);
+	if (error) {
+		up_write(&s->s_umount);
+		deactivate_super(s);
+		return ERR_PTR(error);
+	}
+	s->s_flags |= MS_ACTIVE;
+	return s;
+}
+
+EXPORT_SYMBOL(get_sb_nodev);
 
 static int compare_single(struct super_block *s, void *p)
 {
@@ -269,7 +374,7 @@ struct super_block *get_sb_single(struct file_system_type *fs_type,
 		s->s_flags |= MS_ACTIVE;
 	}
 	do_remount_sb(s, flags, data, 0);
-	return NULL;
+	return s;
 }
 
 EXPORT_SYMBOL(get_sb_single);

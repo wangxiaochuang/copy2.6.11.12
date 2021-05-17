@@ -9,6 +9,9 @@
 static struct hlist_head *pid_hash[PIDTYPE_MAX];
 static int pidhash_shift;
 
+int pid_max = PID_MAX_DEFAULT;
+int last_pid;
+
 #define RESERVED_PIDS		300
 
 #define PIDMAP_ENTRIES		((PID_MAX_LIMIT + 8*PAGE_SIZE - 1)/PAGE_SIZE/8)

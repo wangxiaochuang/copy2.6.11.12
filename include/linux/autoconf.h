@@ -1,7 +1,7 @@
 /*
  * Automatically generated C config: don't edit
  * Linux kernel version: 2.6.11.12
- * Tue Mar 30 16:08:18 2021
+ * Sun May 16 16:58:21 2021
  */
 #ifndef __KERNEL__
 #define __KERNEL__
@@ -38,7 +38,7 @@
 #undef CONFIG_EMBEDDED
 #define CONFIG_KALLSYMS 1
 #define CONFIG_KALLSYMS_ALL 1
-#undef CONFIG_KALLSYMS_EXTRA_PASS
+#define CONFIG_KALLSYMS_EXTRA_PASS 1
 #define CONFIG_FUTEX 1
 #define CONFIG_EPOLL 1
 #undef CONFIG_CC_OPTIMIZE_FOR_SIZE

@@ -5,13 +5,56 @@
 
 #include "sysfs.h"
 
+/* Random magic number */
+#define SYSFS_MAGIC 0x62656572
+
 struct vfsmount *sysfs_mount;
 struct super_block * sysfs_sb = NULL;
 kmem_cache_t *sysfs_dir_cachep;
 
+static struct super_operations sysfs_ops = {
+	.statfs		= simple_statfs,
+	.drop_inode	= generic_delete_inode,
+};
+
+static struct sysfs_dirent sysfs_root = {
+	.s_sibling	= LIST_HEAD_INIT(sysfs_root.s_sibling),
+	.s_children	= LIST_HEAD_INIT(sysfs_root.s_children),
+	.s_element	= NULL,
+	.s_type		= SYSFS_ROOT,
+};
+
 static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-    return 0;
+    struct inode *inode;
+	struct dentry *root;
+    sb->s_blocksize = PAGE_CACHE_SIZE;
+    sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
+    sb->s_magic = SYSFS_MAGIC;
+    sb->s_op = &sysfs_ops;
+    sb->s_time_gran = 1;
+    sysfs_sb = sb;
+
+    inode = sysfs_new_inode(S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO);
+	if (inode) {
+		inode->i_op = &sysfs_dir_inode_operations;
+		inode->i_fop = &sysfs_dir_operations;
+		/* directory inodes start off with i_nlink == 2 (for "." entry) */
+		inode->i_nlink++;	
+	} else {
+		pr_debug("sysfs: could not get root inode\n");
+		return -ENOMEM;
+	}
+
+	root = d_alloc_root(inode);
+	if (!root) {
+		pr_debug("%s: could not get root dentry!\n",__FUNCTION__);
+		iput(inode);
+		return -ENOMEM;
+	}
+	root->d_fsdata = &sysfs_root;
+	sb->s_root = root;
+	return 0;
 }
 
 static struct super_block *sysfs_get_sb(struct file_system_type *fs_type,

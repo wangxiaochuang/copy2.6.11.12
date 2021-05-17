@@ -153,6 +153,24 @@ rwsem_down_failed_common(struct rw_semaphore *sem,
 }
 
 /*
+ * wait for the read lock to be granted
+ */
+struct rw_semaphore fastcall __sched *
+rwsem_down_read_failed(struct rw_semaphore *sem)
+{
+	struct rwsem_waiter waiter;
+
+	rwsemtrace(sem, "Entering rwsem_down_read_failed");
+
+	waiter.flags = RWSEM_WAITING_FOR_READ;
+	rwsem_down_failed_common(sem, &waiter,
+				RWSEM_WAITING_BIAS - RWSEM_ACTIVE_BIAS);
+
+	rwsemtrace(sem, "Leaving rwsem_down_read_failed");
+	return sem;
+}
+
+/*
  * wait for the write lock to be granted
  */
 struct rw_semaphore fastcall __sched *

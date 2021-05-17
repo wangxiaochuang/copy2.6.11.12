@@ -134,6 +134,19 @@ static DEFINE_PER_CPU(struct runqueue, runqueues);
 #define cpu_rq(cpu)		(&per_cpu(runqueues, (cpu)))
 #define this_rq()		(&__get_cpu_var(runqueues))
 
+
+static int schedstat_open(struct inode *inode, struct file *file)
+{
+	return 0;
+}
+
+struct file_operations proc_schedstat_operations = {
+	.open    = schedstat_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = single_release,
+};
+
 /**
  * schedule_tail - first thing a freshly forked thread must call.
  * @prev: the thread we just switched away from.
@@ -286,6 +299,29 @@ int __sched cond_resched(void)
 
 EXPORT_SYMBOL(cond_resched);
 
+int cond_resched_lock(spinlock_t * lock)
+{
+#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPT)
+	if (lock->break_lock) {
+		lock->break_lock = 0;
+		spin_unlock(lock);
+		cpu_relax();
+		spin_lock(lock);
+	}
+#endif
+	if (need_resched()) {
+		_raw_spin_unlock(lock);
+		preempt_enable_no_resched();
+		__cond_resched();
+		spin_lock(lock);
+		return 1;
+	}
+	return 0;
+}
+
+EXPORT_SYMBOL(cond_resched_lock);
+
+
 void __sched yield(void)
 {
 	set_current_state(TASK_RUNNING);
@@ -293,6 +329,17 @@ void __sched yield(void)
 }
 
 EXPORT_SYMBOL(yield);
+
+void __sched io_schedule(void)
+{
+	struct runqueue *rq = &per_cpu(runqueues, _smp_processor_id());
+
+	atomic_inc(&rq->nr_iowait);
+	schedule();
+	atomic_dec(&rq->nr_iowait);
+}
+
+EXPORT_SYMBOL(io_schedule);
 
 void __devinit init_idle(task_t *idle, int cpu) {
 	runqueue_t *rq = cpu_rq(cpu);

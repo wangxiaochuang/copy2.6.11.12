@@ -56,9 +56,81 @@ void free_vfsmnt(struct vfsmount *mnt)
 	kmem_cache_free(mnt_cache, mnt);
 }
 
+void __mntput(struct vfsmount *mnt)
+{
+	struct super_block *sb = mnt->mnt_sb;
+	dput(mnt->mnt_root);
+	free_vfsmnt(mnt);
+	deactivate_super(sb);
+}
+
+EXPORT_SYMBOL(__mntput);
+
+void set_fs_root(struct fs_struct *fs, struct vfsmount *mnt,
+		 struct dentry *dentry)
+{
+	struct dentry *old_root;
+	struct vfsmount *old_rootmnt;
+	write_lock(&fs->lock);
+	old_root = fs->root;
+	old_rootmnt = fs->rootmnt;
+	fs->rootmnt = mntget(mnt);
+	fs->root = dget(dentry);
+	write_unlock(&fs->lock);
+	if (old_root) {
+		dput(old_root);
+		mntput(old_rootmnt);
+	}
+}
+
+void set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
+		struct dentry *dentry)
+{
+	struct dentry *old_pwd;
+	struct vfsmount *old_pwdmnt;
+
+	write_lock(&fs->lock);
+	old_pwd = fs->pwd;
+	old_pwdmnt = fs->pwdmnt;
+	fs->pwdmnt = mntget(mnt);
+	fs->pwd = dget(dentry);
+	write_unlock(&fs->lock);
+
+	if (old_pwd) {
+		dput(old_pwd);
+		mntput(old_pwdmnt);
+	}
+}
+
 static void __init init_mount_tree(void)
 {
-    panic("in init_mount_tree");
+	struct vfsmount *mnt;
+	struct namespace *namespace;
+	struct task_struct *g, *p;
+
+	mnt = do_kern_mount("rootfs", 0, "rootfs", NULL);
+	if (IS_ERR(mnt))
+		panic("Can't create rootfs");
+	namespace = kmalloc(sizeof(*namespace), GFP_KERNEL);
+	if (!namespace)
+		panic("Can't allocate initial namespace");
+	atomic_set(&namespace->count, 1);
+	INIT_LIST_HEAD(&namespace->list);
+	init_rwsem(&namespace->sem);
+	list_add(&mnt->mnt_list, &namespace->list);
+	namespace->root = mnt;
+	mnt->mnt_namespace = namespace;
+
+	init_task.namespace = namespace;
+	read_lock(&tasklist_lock);
+	do_each_thread(g, p) {
+		get_namespace(namespace);
+		p->namespace = namespace;
+	} while_each_thread(g, p);
+	read_unlock(&tasklist_lock);
+
+	set_fs_pwd(current->fs, namespace->root, namespace->root->mnt_root);
+	set_fs_root(current->fs, namespace->root, namespace->root->mnt_root);
 }
 
 void __init mnt_init(unsigned long mempages)

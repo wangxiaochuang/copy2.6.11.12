@@ -743,6 +743,20 @@ unsigned int nr_free_highpages (void)
  */
 static DEFINE_PER_CPU(struct page_state, page_states) = {0};
 
+unsigned long __read_page_state(unsigned offset)
+{
+	unsigned long ret = 0;
+	int cpu;
+
+	for_each_online_cpu(cpu) {
+		unsigned long in;
+
+		in = (unsigned long)&per_cpu(page_states, cpu) + offset;
+		ret += *((unsigned long *)in);
+	}
+	return ret;
+}
+
 void __mod_page_state(unsigned offset, unsigned long delta)
 {
 	unsigned long flags;

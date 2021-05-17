@@ -245,7 +245,7 @@ extern struct kernel_param __start___param[], __stop___param[];
 
 asmlinkage void __init start_kernel(void) {
     char *command_line;
-	strcpy(saved_command_line, "mem=nopentium");
+	strcpy(saved_command_line, "mem=nopentium selinux=1");
     lock_kernel();
     page_address_init();
     printk("%s", linux_banner);
@@ -307,7 +307,12 @@ asmlinkage void __init start_kernel(void) {
 	unnamed_dev_init();
 	security_init();
 	vfs_caches_init(num_physpages);
-	// radix_tree_init();
-	// signals_init();
+	radix_tree_init();
+	signals_init();
+	page_writeback_init();
+#ifdef CONFIG_PROC_FS
+	proc_root_init();
+#endif
+	check_bugs();
     for(;;);
 }

@@ -52,6 +52,9 @@
 #include "objsec.h"
 #include "netif.h"
 
+#define XATTR_SELINUX_SUFFIX "selinux"
+#define XATTR_NAME_SELINUX XATTR_SECURITY_PREFIX XATTR_SELINUX_SUFFIX
+
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 int selinux_enforcing = 0;
 
@@ -103,6 +106,48 @@ static int task_alloc_security(struct task_struct *task)
 	return 0;
 }
 
+static int inode_alloc_security(struct inode *inode)
+{
+	struct task_security_struct *tsec = current->security;
+	struct inode_security_struct *isec;
+
+	isec = kmalloc(sizeof(struct inode_security_struct), GFP_KERNEL);
+	if (!isec)
+		return -ENOMEM;
+
+	memset(isec, 0, sizeof(struct inode_security_struct));
+	init_MUTEX(&isec->sem);
+	INIT_LIST_HEAD(&isec->list);
+	isec->magic = SELINUX_MAGIC;
+	isec->inode = inode;
+	isec->sid = SECINITSID_UNLABELED;
+	isec->sclass = SECCLASS_FILE;
+	if (tsec && tsec->magic == SELINUX_MAGIC)
+		isec->task_sid = tsec->sid;
+	else
+		isec->task_sid = SECINITSID_UNLABELED;
+	inode->i_security = isec;
+
+	return 0;
+}
+
+static void inode_free_security(struct inode *inode)
+{
+	struct inode_security_struct *isec = inode->i_security;
+	struct superblock_security_struct *sbsec = inode->i_sb->s_security;
+
+	if (!isec || isec->magic != SELINUX_MAGIC)
+		return;
+
+	spin_lock(&sbsec->isec_lock);
+	if (!list_empty(&isec->list))
+		list_del_init(&isec->list);
+	spin_unlock(&sbsec->isec_lock);
+
+	inode->i_security = NULL;
+	kfree(isec);
+}
+
 static int superblock_alloc_security(struct super_block *sb)
 {
 	struct superblock_security_struct *sbsec;
@@ -124,6 +169,335 @@ static int superblock_alloc_security(struct super_block *sb)
 
 	return 0;
 }
+
+extern int ss_initialized;
+
+static int superblock_doinit(struct super_block *sb, void *data)
+{
+	struct superblock_security_struct *sbsec = sb->s_security;
+	struct dentry *root = sb->s_root;
+	struct inode *inode = root->d_inode;
+	int rc = 0;
+
+	down(&sbsec->sem);
+	if (sbsec->initialized)
+		goto out;
+
+	if (!ss_initialized) {
+		/* Defer initialization until selinux_complete_init,
+		   after the initial policy is loaded and the security
+		   server is ready to handle calls. */
+		spin_lock(&sb_security_lock);
+		if (list_empty(&sbsec->list))
+			list_add(&sbsec->list, &superblock_security_head);
+		spin_unlock(&sb_security_lock);
+		goto out;
+	}
+out:
+	up(&sbsec->sem);
+	return rc;
+}
+
+static inline u16 inode_mode_to_security_class(umode_t mode)
+{
+	switch (mode & S_IFMT) {
+	case S_IFSOCK:
+		return SECCLASS_SOCK_FILE;
+	case S_IFLNK:
+		return SECCLASS_LNK_FILE;
+	case S_IFREG:
+		return SECCLASS_FILE;
+	case S_IFBLK:
+		return SECCLASS_BLK_FILE;
+	case S_IFDIR:
+		return SECCLASS_DIR;
+	case S_IFCHR:
+		return SECCLASS_CHR_FILE;
+	case S_IFIFO:
+		return SECCLASS_FIFO_FILE;
+
+	}
+
+	return SECCLASS_FILE;
+}
+
+static inline u16 socket_type_to_security_class(int family, int type, int protocol)
+{
+	switch (family) {
+	case PF_UNIX:
+		switch (type) {
+		case SOCK_STREAM:
+		case SOCK_SEQPACKET:
+			return SECCLASS_UNIX_STREAM_SOCKET;
+		case SOCK_DGRAM:
+			return SECCLASS_UNIX_DGRAM_SOCKET;
+		}
+		break;
+	case PF_INET:
+	case PF_INET6:
+		switch (type) {
+		case SOCK_STREAM:
+			return SECCLASS_TCP_SOCKET;
+		case SOCK_DGRAM:
+			return SECCLASS_UDP_SOCKET;
+		case SOCK_RAW:
+			return SECCLASS_RAWIP_SOCKET;
+		}
+		break;
+	case PF_NETLINK:
+		switch (protocol) {
+		case NETLINK_ROUTE:
+			return SECCLASS_NETLINK_ROUTE_SOCKET;
+		case NETLINK_FIREWALL:
+			return SECCLASS_NETLINK_FIREWALL_SOCKET;
+		case NETLINK_TCPDIAG:
+			return SECCLASS_NETLINK_TCPDIAG_SOCKET;
+		case NETLINK_NFLOG:
+			return SECCLASS_NETLINK_NFLOG_SOCKET;
+		case NETLINK_XFRM:
+			return SECCLASS_NETLINK_XFRM_SOCKET;
+		case NETLINK_SELINUX:
+			return SECCLASS_NETLINK_SELINUX_SOCKET;
+		case NETLINK_AUDIT:
+			return SECCLASS_NETLINK_AUDIT_SOCKET;
+		case NETLINK_IP6_FW:
+			return SECCLASS_NETLINK_IP6FW_SOCKET;
+		case NETLINK_DNRTMSG:
+			return SECCLASS_NETLINK_DNRT_SOCKET;
+		default:
+			return SECCLASS_NETLINK_SOCKET;
+		}
+	case PF_PACKET:
+		return SECCLASS_PACKET_SOCKET;
+	case PF_KEY:
+		return SECCLASS_KEY_SOCKET;
+	}
+
+	return SECCLASS_SOCKET;
+}
+
+#ifdef CONFIG_PROC_FS
+static int selinux_proc_get_sid(struct proc_dir_entry *de,
+				u16 tclass,
+				u32 *sid)
+{
+	int buflen, rc;
+	char *buffer, *path, *end;
+
+	buffer = (char*)__get_free_page(GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+
+	buflen = PAGE_SIZE;
+	end = buffer+buflen;
+	*--end = '\0';
+	buflen--;
+	path = end-1;
+	*path = '/';
+	while (de && de != de->parent) {
+		buflen -= de->namelen + 1;
+		if (buflen < 0)
+			break;
+		end -= de->namelen;
+		memcpy(end, de->name, de->namelen);
+		*--end = '/';
+		path = end;
+		de = de->parent;
+	}
+	rc = security_genfs_sid("proc", path, tclass, sid);
+	free_page((unsigned long)buffer);
+	return rc;
+}
+#else
+static int selinux_proc_get_sid(struct proc_dir_entry *de,
+				u16 tclass,
+				u32 *sid)
+{
+	return -EINVAL;
+}
+#endif
+
+static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dentry)
+{
+	struct superblock_security_struct *sbsec = NULL;
+	struct inode_security_struct *isec = inode->i_security;
+	u32 sid;
+	struct dentry *dentry;
+#define INITCONTEXTLEN 255
+	char *context = NULL;
+	unsigned len = 0;
+	int rc = 0;
+	int hold_sem = 0;
+
+	if (isec->initialized)
+		goto out;
+
+	down(&isec->sem);
+	hold_sem = 1;
+	if (isec->initialized)
+		goto out;
+
+	sbsec = inode->i_sb->s_security;
+	if (!sbsec->initialized) {
+		/* Defer initialization until selinux_complete_init,
+		   after the initial policy is loaded and the security
+		   server is ready to handle calls. */
+		spin_lock(&sbsec->isec_lock);
+		if (list_empty(&isec->list))
+			list_add(&isec->list, &sbsec->isec_head);
+		spin_unlock(&sbsec->isec_lock);
+		goto out;
+	}
+
+	switch (sbsec->behavior) {
+	case SECURITY_FS_USE_XATTR:
+		if (!inode->i_op->getxattr) {
+			isec->sid = sbsec->def_sid;
+			break;
+		}
+
+		/* Need a dentry, since the xattr API requires one.
+		   Life would be simpler if we could just pass the inode. */
+		if (opt_dentry) {
+			/* Called from d_instantiate or d_splice_alias. */
+			dentry = dget(opt_dentry);
+		} else {
+			/* Called from selinux_complete_init, try to find a dentry. */
+			dentry = d_find_alias(inode);
+		}
+		if (!dentry) {
+			printk(KERN_WARNING "%s:  no dentry for dev=%s "
+			       "ino=%ld\n", __FUNCTION__, inode->i_sb->s_id,
+			       inode->i_ino);
+			goto out;
+		}
+
+		len = INITCONTEXTLEN;
+		context = kmalloc(len, GFP_KERNEL);
+		if (!context) {
+			rc = -ENOMEM;
+			dput(dentry);
+			goto out;
+		}
+		rc = inode->i_op->getxattr(dentry, XATTR_NAME_SELINUX,
+					   context, len);
+		if (rc == -ERANGE) {
+			/* Need a larger buffer.  Query for the right size. */
+			rc = inode->i_op->getxattr(dentry, XATTR_NAME_SELINUX,
+						   NULL, 0);
+			if (rc < 0) {
+				dput(dentry);
+				goto out;
+			}
+			kfree(context);
+			len = rc;
+			context = kmalloc(len, GFP_KERNEL);
+			if (!context) {
+				rc = -ENOMEM;
+				dput(dentry);
+				goto out;
+			}
+			rc = inode->i_op->getxattr(dentry,
+						   XATTR_NAME_SELINUX,
+						   context, len);
+		}
+		dput(dentry);
+		if (rc < 0) {
+			if (rc != -ENODATA) {
+				printk(KERN_WARNING "%s:  getxattr returned "
+				       "%d for dev=%s ino=%ld\n", __FUNCTION__,
+				       -rc, inode->i_sb->s_id, inode->i_ino);
+				kfree(context);
+				goto out;
+			}
+			/* Map ENODATA to the default file SID */
+			sid = sbsec->def_sid;
+			rc = 0;
+		} else {
+			rc = security_context_to_sid(context, rc, &sid);
+			if (rc) {
+				printk(KERN_WARNING "%s:  context_to_sid(%s) "
+				       "returned %d for dev=%s ino=%ld\n",
+				       __FUNCTION__, context, -rc,
+				       inode->i_sb->s_id, inode->i_ino);
+				kfree(context);
+				goto out;
+			}
+		}
+		kfree(context);
+		isec->sid = sid;
+		break;
+	case SECURITY_FS_USE_TASK:
+		isec->sid = isec->task_sid;
+		break;
+	case SECURITY_FS_USE_TRANS:
+		/* Default to the fs SID. */
+		isec->sid = sbsec->sid;
+
+		/* Try to obtain a transition SID. */
+		isec->sclass = inode_mode_to_security_class(inode->i_mode);
+		rc = security_transition_sid(isec->task_sid,
+					     sbsec->sid,
+					     isec->sclass,
+					     &sid);
+		if (rc)
+			goto out;
+		isec->sid = sid;
+		break;
+	default:
+		/* Default to the fs SID. */
+		isec->sid = sbsec->sid;
+
+		if (sbsec->proc) {
+			struct proc_inode *proci = PROC_I(inode);
+			if (proci->pde) {
+				isec->sclass = inode_mode_to_security_class(inode->i_mode);
+				rc = selinux_proc_get_sid(proci->pde,
+							  isec->sclass,
+							  &sid);
+				if (rc)
+					goto out;
+				isec->sid = sid;
+			}
+		}
+		break;
+	}
+
+	isec->initialized = 1;
+
+out:
+	if (inode->i_sock) {
+		struct socket *sock = SOCKET_I(inode);
+		if (sock->sk) {
+			isec->sclass = socket_type_to_security_class(sock->sk->sk_family,
+			                                             sock->sk->sk_type,
+			                                             sock->sk->sk_protocol);
+		} else {
+			isec->sclass = SECCLASS_SOCKET;
+		}
+	} else {
+		isec->sclass = inode_mode_to_security_class(inode->i_mode);
+	}
+
+	if (hold_sem)
+		up(&isec->sem);
+	return rc;
+}
+
+int superblock_has_perm(struct task_struct *tsk,
+			struct super_block *sb,
+			u32 perms,
+			struct avc_audit_data *ad)
+{
+	struct task_security_struct *tsec;
+	struct superblock_security_struct *sbsec;
+
+	tsec = tsk->security;
+	sbsec = sb->s_security;
+	return avc_has_perm(tsec->sid, sbsec->sid, SECCLASS_FILESYSTEM,
+			    perms, ad);
+}
+
 
 static int selinux_ptrace(struct task_struct *parent, struct task_struct *child)
 {
@@ -231,7 +605,15 @@ static int selinux_sb_copy_data(struct file_system_type *type, void *orig, void 
 
 static int selinux_sb_kern_mount(struct super_block *sb, void *data)
 {
-    return 0;
+    struct avc_audit_data ad;
+	int rc;
+
+	rc = superblock_doinit(sb, data);
+	if (rc)
+		return rc;
+	AVC_AUDIT_DATA_INIT(&ad, FS);
+	ad.u.fs.dentry = sb->s_root;
+	return superblock_has_perm(current, sb, FILESYSTEM__MOUNT, &ad);
 }
 
 static int selinux_sb_statfs(struct super_block *sb)
@@ -255,11 +637,12 @@ static int selinux_umount(struct vfsmount *mnt, int flags)
 
 static int selinux_inode_alloc_security(struct inode *inode)
 {
-    return 0;
+    return inode_alloc_security(inode);
 }
 
 static void selinux_inode_free_security(struct inode *inode)
 {
+	inode_free_security(inode);
 }
 
 static int selinux_inode_create(struct inode *dir, struct dentry *dentry, int mask)
@@ -820,6 +1203,8 @@ int selinux_unregister_security (const char *name, struct security_operations *o
 
 static void selinux_d_instantiate (struct dentry *dentry, struct inode *inode)
 {
+	if (inode)
+		inode_doinit_with_dentry(inode, dentry);
 }
 
 static int selinux_getprocattr(struct task_struct *p,

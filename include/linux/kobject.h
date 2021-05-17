@@ -15,6 +15,10 @@
 #ifndef _KOBJECT_H_
 #define _KOBJECT_H_
 
+#ifndef __KERNEL__
+#define __KERNEL__
+#endif
+
 #ifdef __KERNEL__
 
 #include <linux/types.h>

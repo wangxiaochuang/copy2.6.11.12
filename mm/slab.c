@@ -1633,3 +1633,9 @@ static void drain_array_locked(kmem_cache_t *cachep,
 static void cache_reap(void *unused)
 {
 }
+
+ssize_t slabinfo_write(struct file *file, const char __user *buffer,
+				size_t count, loff_t *ppos)
+{
+	return 0;
+}

@@ -24,8 +24,10 @@ static inline void __lock_kernel(void) {
 }
 #endif /* CONFIG_PREEMPT */   
 
-static inline void __unlock_kernel(void) {
-
+static inline void __unlock_kernel(void)
+{
+	_raw_spin_unlock(&kernel_flag);
+	preempt_enable();
 }
 
 void __lockfunc lock_kernel(void) {
@@ -36,7 +38,9 @@ void __lockfunc lock_kernel(void) {
 }
 
 void __lockfunc unlock_kernel(void) {
-
+    BUG_ON(current->lock_depth < 0);
+	if (likely(--current->lock_depth < 0))
+		__unlock_kernel();
 }
 #endif /* CONFIG_PREEMPT_BKL */
 

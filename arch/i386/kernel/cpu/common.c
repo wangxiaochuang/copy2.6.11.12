@@ -21,7 +21,12 @@
 DEFINE_PER_CPU(struct desc_struct, cpu_gdt_table[GDT_ENTRIES]);
 EXPORT_PER_CPU_SYMBOL(cpu_gdt_table);
 
+static int disable_x86_fxsr __initdata = 0;
+static int disable_x86_serial_nr __initdata = 1;
+
 struct cpu_dev * cpu_devs[X86_VENDOR_NUM] = {};
+
+extern int disable_pse;
 
 static void default_init(struct cpuinfo_x86 * c) {
     if (c->cpuid_level == -1) {
@@ -35,6 +40,56 @@ static struct cpu_dev default_cpu = {
 	.c_init	= default_init,
 };
 static struct cpu_dev * this_cpu = &default_cpu;
+
+int __init get_model_name(struct cpuinfo_x86 *c)
+{
+	unsigned int *v;
+	char *p, *q;
+
+	if (cpuid_eax(0x80000000) < 0x80000004)
+		return 0;
+
+	v = (unsigned int *) c->x86_model_id;
+	cpuid(0x80000002, &v[0], &v[1], &v[2], &v[3]);
+	cpuid(0x80000003, &v[4], &v[5], &v[6], &v[7]);
+	cpuid(0x80000004, &v[8], &v[9], &v[10], &v[11]);
+	c->x86_model_id[48] = 0;
+
+	/* Intel chips right-justify this string for some dumb reason;
+	   undo that brain damage */
+	p = q = &c->x86_model_id[0];
+	while ( *p == ' ' )
+	     p++;
+	if ( p != q ) {
+	     while ( *p )
+		  *q++ = *p++;
+	     while ( q <= &c->x86_model_id[48] )
+		  *q++ = '\0';	/* Zero-pad the rest */
+	}
+
+	return 1;
+}
+
+/* Look up CPU names by table lookup. */
+static char __init *table_lookup_model(struct cpuinfo_x86 *c)
+{
+	struct cpu_model_info *info;
+
+	if ( c->x86_model >= 16 )
+		return NULL;	/* Range check */
+
+	if (!this_cpu)
+		return NULL;
+
+	info = this_cpu->c_models;
+
+	while (info && info->family) {
+		if (info->family == c->x86)
+			return info->model_names[c->x86_model];
+		info++;
+	}
+	return NULL;		/* Not found */
+}
 
 void __init get_cpu_vendor(struct cpuinfo_x86 *c, int early) {
     char *v = c->x86_vendor_id;
@@ -107,11 +162,181 @@ void __init early_cpu_detect(void) {
 }
 
 void __init generic_identify(struct cpuinfo_x86 * c) {
-    
+    u32 tfms, xlvl;
+	int junk;
+
+	if (have_cpuid_p()) {
+		/* Get vendor name */
+		cpuid(0x00000000, &c->cpuid_level,
+		      (int *)&c->x86_vendor_id[0],
+		      (int *)&c->x86_vendor_id[8],
+		      (int *)&c->x86_vendor_id[4]);
+		
+		get_cpu_vendor(c, 0);
+		/* Initialize the standard set of capabilities */
+		/* Note that the vendor-specific code below might override */
+	
+		/* Intel-defined flags: level 0x00000001 */
+		if ( c->cpuid_level >= 0x00000001 ) {
+			u32 capability, excap;
+			cpuid(0x00000001, &tfms, &junk, &excap, &capability);
+			c->x86_capability[0] = capability;
+			c->x86_capability[4] = excap;
+			c->x86 = (tfms >> 8) & 15;
+			c->x86_model = (tfms >> 4) & 15;
+			if (c->x86 == 0xf) {
+				c->x86 += (tfms >> 20) & 0xff;
+				c->x86_model += ((tfms >> 16) & 0xF) << 4;
+			} 
+			c->x86_mask = tfms & 15;
+		} else {
+			/* Have CPUID level 0 only - unheard of */
+			c->x86 = 4;
+		}
+
+		/* AMD-defined flags: level 0x80000001 */
+		xlvl = cpuid_eax(0x80000000);
+		if ( (xlvl & 0xffff0000) == 0x80000000 ) {
+			if ( xlvl >= 0x80000001 ) {
+				c->x86_capability[1] = cpuid_edx(0x80000001);
+				c->x86_capability[6] = cpuid_ecx(0x80000001);
+			}
+			if ( xlvl >= 0x80000004 )
+				get_model_name(c); /* Default name */
+		}
+	}
 }
 
+static void __init squash_the_stupid_serial_number(struct cpuinfo_x86 *c)
+{
+	if (cpu_has(c, X86_FEATURE_PN) && disable_x86_serial_nr ) {
+		/* Disable processor serial number */
+		unsigned long lo,hi;
+		rdmsr(MSR_IA32_BBL_CR_CTL,lo,hi);
+		lo |= 0x200000;
+		wrmsr(MSR_IA32_BBL_CR_CTL,lo,hi);
+		printk(KERN_NOTICE "CPU serial number disabled.\n");
+		clear_bit(X86_FEATURE_PN, c->x86_capability);
+
+		/* Disabling the serial number may affect the cpuid level */
+		c->cpuid_level = cpuid_eax(0);
+	}
+}
+
+static int __init x86_serial_nr_setup(char *s)
+{
+	disable_x86_serial_nr = 0;
+	return 1;
+}
+__setup("serialnumber", x86_serial_nr_setup);
+
 void __init identify_cpu(struct cpuinfo_x86 *c) {
-    
+    int i;
+
+	c->loops_per_jiffy = loops_per_jiffy;
+	c->x86_cache_size = -1;
+	c->x86_vendor = X86_VENDOR_UNKNOWN;
+	c->cpuid_level = -1;	/* CPUID not detected */
+	c->x86_model = c->x86_mask = 0;	/* So far unknown... */
+	c->x86_vendor_id[0] = '\0'; /* Unset */
+	c->x86_model_id[0] = '\0';  /* Unset */
+	c->x86_num_cores = 1;
+	memset(&c->x86_capability, 0, sizeof c->x86_capability);
+
+	if (!have_cpuid_p()) {
+		/* First of all, decide if this is a 486 or higher */
+		/* It's a 486 if we can modify the AC flag */
+		if ( flag_is_changeable_p(X86_EFLAGS_AC) )
+			c->x86 = 4;
+		else
+			c->x86 = 3;
+	}
+
+	generic_identify(c);
+
+	printk(KERN_DEBUG "CPU: After generic identify, caps:");
+	for (i = 0; i < NCAPINTS; i++)
+		printk(" %08lx", c->x86_capability[i]);
+	printk("\n");
+
+	if (this_cpu->c_identify) {
+		this_cpu->c_identify(c);
+
+		printk(KERN_DEBUG "CPU: After vendor identify, caps:");
+		for (i = 0; i < NCAPINTS; i++)
+			printk(" %08lx", c->x86_capability[i]);
+		printk("\n");
+	}
+
+	/*
+	 * Vendor-specific initialization.  In this section we
+	 * canonicalize the feature flags, meaning if there are
+	 * features a certain CPU supports which CPUID doesn't
+	 * tell us, CPUID claiming incorrect flags, or other bugs,
+	 * we handle them here.
+	 *
+	 * At the end of this section, c->x86_capability better
+	 * indicate the features this CPU genuinely supports!
+	 */
+	if (this_cpu->c_init)
+		this_cpu->c_init(c);
+
+	/* Disable the PN if appropriate */
+	squash_the_stupid_serial_number(c);
+
+	/*
+	 * The vendor-specific functions might have changed features.  Now
+	 * we do "generic changes."
+	 */
+
+	/* TSC disabled? */
+	if ( tsc_disable )
+		clear_bit(X86_FEATURE_TSC, c->x86_capability);
+
+	/* FXSR disabled? */
+	if (disable_x86_fxsr) {
+		clear_bit(X86_FEATURE_FXSR, c->x86_capability);
+		clear_bit(X86_FEATURE_XMM, c->x86_capability);
+	}
+
+	if (disable_pse)
+		clear_bit(X86_FEATURE_PSE, c->x86_capability);
+
+	/* If the model name is still unset, do table lookup. */
+	if ( !c->x86_model_id[0] ) {
+		char *p;
+		p = table_lookup_model(c);
+		if ( p )
+			strcpy(c->x86_model_id, p);
+		else
+			/* Last resort... */
+			sprintf(c->x86_model_id, "%02x/%02x",
+				c->x86_vendor, c->x86_model);
+	}
+
+	/* Now the feature flags better reflect actual CPU features! */
+
+	printk(KERN_DEBUG "CPU: After all inits, caps:");
+	for (i = 0; i < NCAPINTS; i++)
+		printk(" %08lx", c->x86_capability[i]);
+	printk("\n");
+
+	/*
+	 * On SMP, boot_cpu_data holds the common feature set between
+	 * all CPUs; so make sure that we indicate which features are
+	 * common between the CPUs.  The first time this routine gets
+	 * executed, c == &boot_cpu_data.
+	 */
+	if ( c != &boot_cpu_data ) {
+		/* AND the already accumulated flags with these */
+		for ( i = 0 ; i < NCAPINTS ; i++ )
+			boot_cpu_data.x86_capability[i] &= c->x86_capability[i];
+	}
+
+	/* Init Machine Check Exception if available. */
+#ifdef CONFIG_X86_MCE
+	mcheck_init(c);
+#endif
 }
 
 cpumask_t cpu_initialized __initdata = CPU_MASK_NONE;

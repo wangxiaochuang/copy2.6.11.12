@@ -5,7 +5,8 @@
 EXTRA_CFLAGS += -Isecurity/selinux/include
 obj-y := ss.o
 
-ss-y := ebitmap.o hashtab.o symtab.o sidtab.o avtab.o policydb.o services.o conditional.o
+# ss-y := ebitmap.o hashtab.o symtab.o sidtab.o avtab.o policydb.o services.o conditional.o
+ss-y := ebitmap.o hashtab.o sidtab.o avtab.o policydb.o services.o conditional.o
 
-ss-$(CONFIG_SECURITY_SELINUX_MLS) += mls.o
+# ss-$(CONFIG_SECURITY_SELINUX_MLS) += mls.o
 

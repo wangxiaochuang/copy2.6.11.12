@@ -20,9 +20,51 @@
 #include <linux/cpu.h>
 #include <linux/bitops.h>
 
+int sync_blockdev(struct block_device *bdev)
+{
+	int ret = 0;
+
+	if (bdev) {
+		int err;
+
+		ret = filemap_fdatawrite(bdev->bd_inode->i_mapping);
+		err = filemap_fdatawait(bdev->bd_inode->i_mapping);
+		if (!ret)
+			ret = err;
+	}
+	return ret;
+}
+EXPORT_SYMBOL(sync_blockdev);
+
 int fsync_super(struct super_block *sb)
 {
-	panic("in fsync_super function");
+	sync_inodes_sb(sb, 0);
+	DQUOT_SYNC(sb);
+	lock_super(sb);
+	if (sb->s_dirt && sb->s_op->write_super)
+		sb->s_op->write_super(sb);
+	unlock_super(sb);
+	if (sb->s_op->sync_fs)
+		sb->s_op->sync_fs(sb, 1);
+	sync_blockdev(sb->s_bdev);
+	sync_inodes_sb(sb, 1);
+
+	return sync_blockdev(sb->s_bdev);
+}
+
+int inode_has_buffers(struct inode *inode)
+{
+	return !list_empty(&inode->i_data.private_list);
+}
+
+void invalidate_inode_buffers(struct inode *inode)
+{
+	panic("in invalidate_inode_buffers function");
+}
+
+int block_sync_page(struct page *page)
+{
+	panic("in block_sync_page function");
 	return 0;
 }
 
@@ -40,6 +82,8 @@ static int max_buffer_heads;
 void free_buffer_head(struct buffer_head *bh)
 {
 }
+
+EXPORT_SYMBOL(free_buffer_head);
 
 static void
 init_buffer_head(void *data, kmem_cache_t *cachep, unsigned long flags)

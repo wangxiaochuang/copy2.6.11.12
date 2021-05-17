@@ -29,6 +29,8 @@
 
 unsigned long init_pg_tables_end __initdata = ~0UL;
 
+extern void mcheck_init(struct cpuinfo_x86 *c);
+
 int disable_pse __initdata = 0;
 
 #ifdef CONFIG_EFI

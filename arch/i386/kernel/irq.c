@@ -37,3 +37,12 @@ fastcall unsigned int do_IRQ(struct pt_regs *regs)
  */
 
 atomic_t irq_err_count;
+
+/*
+ * /proc/interrupts printing:
+ */
+
+int show_interrupts(struct seq_file *p, void *v)
+{
+    return 0;
+}

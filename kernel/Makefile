@@ -13,7 +13,7 @@ obj-y = sched.o fork.o exec_domain.o panic.o printk.o profile.o \
 		timer.o user.o \
 		signal.o sys.o workqueue.o pid.o \
 		rcupdate.o extable.o params.o posix-timers.o \
-		sys_ni.o
+		wait.o sys_ni.o
 
 # obj-$(CONFIG_FUTEX) += futex.o
 # obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o

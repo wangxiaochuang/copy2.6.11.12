@@ -35,7 +35,26 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
+int nr_threads;
+
 int max_threads;
+
+DEFINE_PER_CPU(unsigned long, process_counts) = 0;
+
+__cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
+
+EXPORT_SYMBOL(tasklist_lock);
+
+int nr_processes(void)
+{
+	int cpu;
+	int total = 0;
+
+	for_each_online_cpu(cpu)
+		total += per_cpu(process_counts, cpu);
+
+	return total;
+}
 
 #ifndef __HAVE_ARCH_TASK_STRUCT_ALLOCATOR
 # define alloc_task_struct()	kmem_cache_alloc(task_struct_cachep, GFP_KERNEL)

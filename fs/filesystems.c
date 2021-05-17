@@ -54,6 +54,27 @@ int register_filesystem(struct file_system_type * fs)
 
 EXPORT_SYMBOL(register_filesystem);
 
+int unregister_filesystem(struct file_system_type * fs)
+{
+    struct file_system_type ** tmp;
+
+	write_lock(&file_systems_lock);
+	tmp = &file_systems;
+	while (*tmp) {
+		if (fs == *tmp) {
+			*tmp = fs->next;
+			fs->next = NULL;
+			write_unlock(&file_systems_lock);
+			return 0;
+		}
+		tmp = &(*tmp)->next;
+	}
+	write_unlock(&file_systems_lock);
+	return -EINVAL;
+}
+
+EXPORT_SYMBOL(unregister_filesystem);
+
 struct file_system_type *get_fs_type(const char *name)
 {
 	struct file_system_type *fs;

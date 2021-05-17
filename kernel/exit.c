@@ -12,3 +12,10 @@ fastcall NORET_TYPE void do_exit(long code)
 {
     for(;;);
 }
+
+task_t fastcall *next_thread(const task_t *p)
+{
+	return pid_task(p->pids[PIDTYPE_TGID].pid_list.next, PIDTYPE_TGID);
+}
+
+EXPORT_SYMBOL(next_thread);

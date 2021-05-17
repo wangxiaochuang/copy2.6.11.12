@@ -23,3 +23,19 @@ long pps_jitcnt;		/* jitter limit exceeded */
 long pps_calcnt;		/* calibration intervals */
 long pps_errcnt;		/* calibration errors */
 long pps_stbcnt;		/* stability limit exceeded */
+
+inline struct timespec current_kernel_time(void)
+{
+        struct timespec now;
+        unsigned long seq;
+
+	do {
+		seq = read_seqbegin(&xtime_lock);
+		
+		now = xtime;
+	} while (read_seqretry(&xtime_lock, seq));
+
+	return now; 
+}
+
+EXPORT_SYMBOL(current_kernel_time);
