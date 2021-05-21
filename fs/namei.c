@@ -15,6 +15,12 @@
 #include <asm/namei.h>
 #include <asm/uaccess.h>
 
+void path_release(struct nameidata *nd)
+{
+	dput(nd->dentry);
+	mntput(nd->mnt);
+}
+
 int generic_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 {
     return 0;

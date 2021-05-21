@@ -527,7 +527,18 @@ static void update_wall_time(unsigned long ticks)
  */
 void update_process_times(int user_tick)
 {
-	// @todo timer
+	struct task_struct *p = current;
+	int cpu = smp_processor_id();
+
+	/* Note: this timer irq context must be accounted for as well. */
+	if (user_tick)
+		account_user_time(p, jiffies_to_cputime(1));
+	else
+		account_system_time(p, HARDIRQ_OFFSET, jiffies_to_cputime(1));
+	run_local_timers();
+	if (rcu_pending(cpu))
+		rcu_check_callbacks(cpu, user_tick);
+	scheduler_tick();
 }
 
 static unsigned long count_active_tasks(void)
@@ -574,6 +585,11 @@ static void run_timer_softirq(struct softirq_action *h)
 
 	if (time_after_eq(jiffies, base->timer_jiffies))
 		__run_timers(base);
+}
+
+void run_local_timers(void)
+{
+	raise_softirq(TIMER_SOFTIRQ);
 }
 
 static inline void update_times(void) {

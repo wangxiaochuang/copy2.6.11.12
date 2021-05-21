@@ -105,6 +105,27 @@ static unsigned long long monotonic_clock_tsc(void)
 	return base + cycles_2_ns(this_offset - last_offset);
 }
 
+unsigned long long sched_clock(void)
+{
+	unsigned long long this_offset;
+
+	/*
+	 * In the NUMA case we dont use the TSC as they are not
+	 * synchronized across all CPUs.
+	 */
+#ifndef CONFIG_NUMA
+	if (!use_tsc)
+#endif
+		/* no locking but a rare wrong value is not a big deal */
+		return jiffies_64 * (1000000000 / HZ);
+
+	/* Read the Time Stamp Counter */
+	rdtscll(this_offset);
+
+	/* return the value in ns */
+	return cycles_2_ns(this_offset);
+}
+
 static void delay_tsc(unsigned long loops)
 {
 	unsigned long bclock, now;

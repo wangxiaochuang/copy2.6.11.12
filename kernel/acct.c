@@ -37,3 +37,16 @@ void acct_auto_close(struct super_block *sb)
 	}
 	spin_unlock(&acct_globals.lock);
 }
+
+/*
+ * acct_clear_integrals
+ *    - clear the mm integral fields in task_struct
+ */
+void acct_clear_integrals(struct task_struct *tsk)
+{
+	if (tsk) {
+		tsk->acct_stimexpd = 0;
+		tsk->acct_rss_mem1 = 0;
+		tsk->acct_vm_mem1 = 0;
+	}
+}

@@ -484,6 +484,20 @@ out:
 	return rc;
 }
 
+/* Check permission betweeen a pair of tasks, e.g. signal checks,
+   fork check, ptrace check, etc. */
+int task_has_perm(struct task_struct *tsk1,
+		  struct task_struct *tsk2,
+		  u32 perms)
+{
+	struct task_security_struct *tsec1, *tsec2;
+
+	tsec1 = tsk1->security;
+	tsec2 = tsk2->security;
+	return avc_has_perm(tsec1->sid, tsec2->sid,
+			    SECCLASS_PROCESS, perms, NULL);
+}
+
 int superblock_has_perm(struct task_struct *tsk,
 			struct super_block *sb,
 			u32 perms,
@@ -549,7 +563,20 @@ static int selinux_syslog(int type)
 
 static int selinux_vm_enough_memory(long pages)
 {
-    return 0;
+    int rc, cap_sys_admin = 0;
+	struct task_security_struct *tsec = current->security;
+
+	rc = secondary_ops->capable(current, CAP_SYS_ADMIN);
+	if (rc == 0)
+		rc = avc_has_perm_noaudit(tsec->sid, tsec->sid,
+					SECCLASS_CAPABILITY,
+					CAP_TO_MASK(CAP_SYS_ADMIN),
+					NULL);
+
+	if (rc == 0)
+		cap_sys_admin = 1;
+
+	return __vm_enough_memory(pages, cap_sys_admin);
 }
 
 static int selinux_bprm_alloc_security(struct linux_binprm *bprm)
@@ -841,7 +868,13 @@ static int selinux_file_receive(struct file *file)
 
 static int selinux_task_create(unsigned long clone_flags)
 {
-    return 0;
+    int rc;
+
+	rc = secondary_ops->task_create(clone_flags);
+	if (rc)
+		return rc;
+
+	return task_has_perm(current, current, PROCESS__FORK);
 }
 
 static int selinux_task_alloc_security(struct task_struct *tsk)

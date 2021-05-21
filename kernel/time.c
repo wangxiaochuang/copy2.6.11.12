@@ -39,3 +39,20 @@ inline struct timespec current_kernel_time(void)
 }
 
 EXPORT_SYMBOL(current_kernel_time);
+
+#ifdef CONFIG_TIME_INTERPOLATION
+#error "CONFIG_TIME_INTERPOLATION"
+#else
+/*
+ * Simulate gettimeofday using do_gettimeofday which only allows a timeval
+ * and therefore only yields usec accuracy
+ */
+void getnstimeofday(struct timespec *tv)
+{
+	struct timeval x;
+
+	do_gettimeofday(&x);
+	tv->tv_sec = x.tv_sec;
+	tv->tv_nsec = x.tv_usec * NSEC_PER_USEC;
+}
+#endif

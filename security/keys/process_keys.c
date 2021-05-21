@@ -46,3 +46,53 @@ struct key root_session_keyring = {
 	.magic		= KEY_DEBUG_MAGIC,
 #endif
 };
+
+/*****************************************************************************/
+/*
+ * install a fresh process keyring, discarding the old one
+ */
+static int install_process_keyring(struct task_struct *tsk)
+{
+	return 0;
+}
+
+/*****************************************************************************/
+/*
+ * copy the keys for fork
+ */
+int copy_keys(unsigned long clone_flags, struct task_struct *tsk)
+{
+	int ret = 0;
+
+	key_check(tsk->session_keyring);
+	key_check(tsk->process_keyring);
+	key_check(tsk->thread_keyring);
+
+	if (tsk->session_keyring)
+		atomic_inc(&tsk->session_keyring->usage);
+
+	if (tsk->process_keyring) {
+		if (clone_flags & CLONE_THREAD) {
+			atomic_inc(&tsk->process_keyring->usage);
+		}
+		else {
+			tsk->process_keyring = NULL;
+			ret = install_process_keyring(tsk);
+		}
+	}
+
+	tsk->thread_keyring = NULL;
+	return ret;
+}
+
+/*****************************************************************************/
+/*
+ * dispose of keys upon exit
+ */
+void exit_keys(struct task_struct *tsk)
+{
+	key_put(tsk->session_keyring);
+	key_put(tsk->process_keyring);
+	key_put(tsk->thread_keyring);
+
+} /* end exit_keys() */

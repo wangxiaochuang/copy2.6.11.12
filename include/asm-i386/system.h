@@ -93,13 +93,14 @@ static inline unsigned long _get_base(char * addr)
 		".align 4\n\t"			\
 		".long 1b,3b\n"			\
 		".previous"			\
-		: :"m" (*(unsigned int *)&(value)))
+		: :"rm" ((unsigned int)(value)))
 
 /*
  * Save a segment register away
  */
 #define savesegment(seg, value) \
-	asm volatile("movl %%" #seg ",%0":"=m" (*(int *)&(value)))
+	asm volatile("movl %%" #seg ",%0":"=rm" (value)::"memory")
+	// asm volatile("movl %%" #seg ",%0":"=m" (*(int *)&(value)))
 
 /*
  * Clear and set 'TS' bit respectively

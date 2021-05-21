@@ -14,3 +14,16 @@
 
 FADT_DESCRIPTOR			acpi_fadt;
 EXPORT_SYMBOL(acpi_fadt);
+
+void __init
+acpi_early_init (void)
+{
+	acpi_status		status = AE_OK;
+	struct acpi_buffer	buffer = {sizeof(acpi_fadt), &acpi_fadt};
+
+	ACPI_FUNCTION_TRACE("acpi_early_init");
+
+	if (acpi_disabled)
+		return_VOID;
+    
+}

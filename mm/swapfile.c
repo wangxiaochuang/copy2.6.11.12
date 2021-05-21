@@ -25,6 +25,10 @@
 #include <asm/tlbflush.h>
 #include <linux/swapops.h>
 
+long total_swap_pages;
+
+EXPORT_SYMBOL(total_swap_pages);
+
 void swap_unplug_io_fn(struct backing_dev_info *unused_bdi, struct page *page)
 {
     panic("in swap_unplug_io_fn function");

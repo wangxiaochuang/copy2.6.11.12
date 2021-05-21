@@ -4,6 +4,8 @@
 #include <linux/bitops.h>
 #include <linux/key.h>
 
+static DEFINE_SPINLOCK(uidhash_lock);
+
 struct user_struct root_user = {
 	.__count	= ATOMIC_INIT(1),
 	.processes	= ATOMIC_INIT(1),
@@ -16,3 +18,10 @@ struct user_struct root_user = {
 	.session_keyring = &root_session_keyring,
 #endif
 };
+
+void free_uid(struct user_struct *up)
+{
+	if (up && atomic_dec_and_lock(&up->__count, &uidhash_lock)) {
+		panic("in free_uid function");
+	}
+}

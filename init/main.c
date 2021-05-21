@@ -40,6 +40,30 @@
 #include <asm/bugs.h>
 #include <asm/setup.h>
 
+/*
+ * This is one of the first .c files built. Error out early
+ * if we have compiler trouble..
+ */
+#if __GNUC__ == 2 && __GNUC_MINOR__ == 96
+#ifdef CONFIG_FRAME_POINTER
+#error This compiler cannot compile correctly with frame pointers enabled
+#endif
+#endif
+
+#ifdef CONFIG_X86_LOCAL_APIC
+#include <asm/smp.h>
+#endif
+
+/*
+ * Versions of gcc older than that listed below may actually compile
+ * and link okay, but the end product can have subtle run time bugs.
+ * To avoid associated bogus bug reports, we flatly refuse to compile
+ * with a gcc that is known to be too old from the very beginning.
+ */
+#if __GNUC__ < 2 || (__GNUC__ == 2 && __GNUC_MINOR__ < 95)
+#error Sorry, your GCC is too old. It builds incorrect kernels.
+#endif
+
 static int init(void *);
 
 extern void init_IRQ(void);
@@ -214,6 +238,16 @@ static void __init setup_per_cpu_areas(void) {
 
 #endif
 
+static void noinline rest_init(void)
+	__releases(kernel_lock)
+{
+	kernel_thread(init, NULL, CLONE_FS | CLONE_SIGHAND);
+	numa_default_policy();
+	unlock_kernel();
+	preempt_enable_no_resched();
+	cpu_idle();
+} 
+
 /* Check for early params. */
 static int __init do_early_param(char *param, char *val) {
 	struct obs_kernel_param *p;
@@ -245,7 +279,7 @@ extern struct kernel_param __start___param[], __stop___param[];
 
 asmlinkage void __init start_kernel(void) {
     char *command_line;
-	strcpy(saved_command_line, "mem=nopentium selinux=1");
+	strcpy(saved_command_line, "mem=nopentium selinux=1 no_replacement");
     lock_kernel();
     page_address_init();
     printk("%s", linux_banner);
@@ -313,6 +347,15 @@ asmlinkage void __init start_kernel(void) {
 #ifdef CONFIG_PROC_FS
 	proc_root_init();
 #endif
-	check_bugs();
+	// check_bugs();
+	// acpi_early_init();
+	rest_init();
     for(;;);
+}
+
+static int init(void * unused)
+{
+	for(;;)
+		printk("in init\n");
+	return 0;
 }

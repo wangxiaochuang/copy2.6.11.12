@@ -218,6 +218,18 @@ static void rcu_process_callbacks(unsigned long unused)
 				&__get_cpu_var(rcu_bh_data));
 }
 
+void rcu_check_callbacks(int cpu, int user)
+{
+	if (user || 
+	    (idle_cpu(cpu) && !in_softirq() && 
+				hardirq_count() <= (1 << HARDIRQ_SHIFT))) {
+		rcu_qsctr_inc(cpu);
+		rcu_bh_qsctr_inc(cpu);
+	} else if (!in_softirq())
+		rcu_bh_qsctr_inc(cpu);
+	tasklet_schedule(&per_cpu(rcu_tasklet, cpu));
+}
+
 static void rcu_init_percpu_data(int cpu, struct rcu_ctrlblk *rcp,
 						struct rcu_data *rdp)
 {

@@ -230,7 +230,17 @@ void __vunmap(void *addr, int deallocate_pages)
 
 	if (!addr)
 		return;
+
+	panic("in __vunmap function");
 }
+
+void vfree(void *addr)
+{
+	BUG_ON(in_interrupt());
+	__vunmap(addr, 1);
+}
+
+EXPORT_SYMBOL(vfree);
 
 void vunmap(void *addr)
 {
@@ -239,3 +249,19 @@ void vunmap(void *addr)
 }
 
 EXPORT_SYMBOL(vunmap);
+
+
+
+void *__vmalloc(unsigned long size, int gfp_mask, pgprot_t prot)
+{
+	panic("in __vmalloc function");
+}
+
+EXPORT_SYMBOL(__vmalloc);
+
+void *vmalloc(unsigned long size)
+{
+       return __vmalloc(size, GFP_KERNEL | __GFP_HIGHMEM, PAGE_KERNEL);
+}
+
+EXPORT_SYMBOL(vmalloc);

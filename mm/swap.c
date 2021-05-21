@@ -28,3 +28,26 @@ unsigned pagevec_lookup_tag(struct pagevec *pvec, struct address_space *mapping,
 					nr_pages, pvec->pages);
 	return pagevec_count(pvec);
 }
+
+#ifdef CONFIG_SMP
+
+#define ACCT_THRESHOLD	max(16, NR_CPUS * 2)
+
+static DEFINE_PER_CPU(long, committed_space) = 0;
+
+void vm_acct_memory(long pages)
+{
+	long *local;
+
+	preempt_disable();
+	local = &__get_cpu_var(committed_space);
+	*local += pages;
+	if (*local > ACCT_THRESHOLD || *local < -ACCT_THRESHOLD) {
+		atomic_add(*local, &vm_committed_space);
+		*local = 0;
+	}
+	preempt_enable();
+}
+EXPORT_SYMBOL(vm_acct_memory);
+
+#endif /* CONFIG_SMP */

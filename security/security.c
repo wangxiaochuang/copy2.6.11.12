@@ -64,3 +64,18 @@ int register_security(struct security_operations *ops)
 
 	return 0;
 }
+
+int capable(int cap)
+{
+	if (security_ops->capable(current, cap)) {
+		/* capability denied */
+		return 0;
+	}
+
+	/* capability granted */
+	current->flags |= PF_SUPERPRIV;
+	return 1;
+}
+
+EXPORT_SYMBOL(capable);
+EXPORT_SYMBOL(security_ops);

@@ -23,9 +23,20 @@ extern int __init sysfs_init(void);
 #error "!CONFIG_SYSFS"
 #endif
 
+/* spinlock for vfsmount related operations, inplace of dcache_lock */
+ __cacheline_aligned_in_smp DEFINE_SPINLOCK(vfsmount_lock);
+
 static struct list_head *mount_hashtable;
 static int hash_mask, hash_bits;
 static kmem_cache_t *mnt_cache;
+
+static inline unsigned long hash(struct vfsmount *mnt, struct dentry *dentry)
+{
+	unsigned long tmp = ((unsigned long) mnt / L1_CACHE_BYTES);
+	tmp += ((unsigned long) dentry / L1_CACHE_BYTES);
+	tmp = tmp + (tmp >> hash_bits);
+	return tmp & hash_mask;
+}
 
 struct vfsmount *alloc_vfsmnt(const char *name)
 {
@@ -56,6 +67,49 @@ void free_vfsmnt(struct vfsmount *mnt)
 	kmem_cache_free(mnt_cache, mnt);
 }
 
+
+static inline int check_mnt(struct vfsmount *mnt)
+{
+	return mnt->mnt_namespace == current->namespace;
+}
+
+static void detach_mnt(struct vfsmount *mnt, struct nameidata *old_nd)
+{
+	old_nd->dentry = mnt->mnt_mountpoint;
+	old_nd->mnt = mnt->mnt_parent;
+	mnt->mnt_parent = mnt;
+	mnt->mnt_mountpoint = mnt->mnt_root;
+	list_del_init(&mnt->mnt_child);
+	list_del_init(&mnt->mnt_hash);
+	old_nd->dentry->d_mounted--;
+}
+
+static void attach_mnt(struct vfsmount *mnt, struct nameidata *nd)
+{
+	mnt->mnt_parent = mntget(nd->mnt);
+	mnt->mnt_mountpoint = dget(nd->dentry);
+	list_add(&mnt->mnt_hash, mount_hashtable+hash(nd->mnt, nd->dentry));
+	list_add_tail(&mnt->mnt_child, &nd->mnt->mnt_mounts);
+	nd->dentry->d_mounted++;
+}
+
+static struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
+{
+	struct list_head *next = p->mnt_mounts.next;
+	if (next == &p->mnt_mounts) {
+		while (1) {
+			if (p == root)
+				return NULL;
+			next = p->mnt_child.next;
+			if (next != &p->mnt_parent->mnt_mounts)
+				break;
+			p = p->mnt_parent;
+		}
+	}
+	return list_entry(next, struct vfsmount, mnt_child);
+}
+
+
 void __mntput(struct vfsmount *mnt)
 {
 	struct super_block *sb = mnt->mnt_sb;
@@ -65,6 +119,55 @@ void __mntput(struct vfsmount *mnt)
 }
 
 EXPORT_SYMBOL(__mntput);
+
+
+void umount_tree(struct vfsmount *mnt)
+{
+	struct vfsmount *p;
+	LIST_HEAD(kill);
+
+	for (p = mnt; p; p = next_mnt(p, mnt)) {
+		list_del(&p->mnt_list);
+		list_add(&p->mnt_list, &kill);
+	}
+
+	while (!list_empty(&kill)) {
+		mnt = list_entry(kill.next, struct vfsmount, mnt_list);
+		list_del_init(&mnt->mnt_list);
+		list_del_init(&mnt->mnt_fslink);
+		if (mnt->mnt_parent == mnt) {
+			spin_unlock(&vfsmount_lock);
+		} else {
+			struct nameidata old_nd;
+			detach_mnt(mnt, &old_nd);
+			spin_unlock(&vfsmount_lock);
+			path_release(&old_nd);
+		}
+		mntput(mnt);
+		spin_lock(&vfsmount_lock);
+	}
+}
+
+
+
+int copy_namespace(int flags, struct task_struct *tsk)
+{
+	struct namespace *namespace = tsk->namespace;
+	struct namespace *new_ns;
+	struct vfsmount *rootmnt = NULL, *pwdmnt = NULL, *altrootmnt = NULL;
+	struct fs_struct *fs = tsk->fs;
+	struct vfsmount *p, *q;
+
+	if (!namespace)
+		return 0;
+	get_namespace(namespace);
+
+	if (!(flags & CLONE_NEWNS))
+		return 0;
+
+	panic("in copy_namespace function");
+	return 0;
+}
 
 void set_fs_root(struct fs_struct *fs, struct vfsmount *mnt,
 		 struct dentry *dentry)
@@ -183,4 +286,21 @@ void __init mnt_init(unsigned long mempages)
     sysfs_init();
 	init_rootfs();
 	init_mount_tree();
+}
+
+void __put_namespace(struct namespace *namespace)
+{
+	struct vfsmount *mnt;
+
+	down_write(&namespace->sem);
+	spin_lock(&vfsmount_lock);
+
+	list_for_each_entry(mnt, &namespace->list, mnt_list) {
+		mnt->mnt_namespace = NULL;
+	}
+	
+	umount_tree(namespace->root);
+	spin_unlock(&vfsmount_lock);
+	up_write(&namespace->sem);
+	kfree(namespace);
 }

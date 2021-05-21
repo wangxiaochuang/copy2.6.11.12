@@ -14,7 +14,7 @@
 obj-y := open.o read_write.o file_table.o buffer.o super.o \
 		block_dev.o char_dev.o namei.o \
 		fifo.o dcache.o inode.o \
-		bad_inode.o filesystems.o namespace.o \
+		bad_inode.o file.o filesystems.o namespace.o \
 		seq_file.o libfs.o fs-writeback.o mpage.o
 
 # obj-$(CONFIG_EPOLL)		+= eventpoll.o

@@ -16,6 +16,10 @@ int last_pid;
 
 #define PIDMAP_ENTRIES		((PID_MAX_LIMIT + 8*PAGE_SIZE - 1)/PAGE_SIZE/8)
 #define BITS_PER_PAGE		(PAGE_SIZE*8)
+#define BITS_PER_PAGE_MASK	(BITS_PER_PAGE-1)
+#define mk_pid(map, off)	(((map) - pidmap_array)*BITS_PER_PAGE + (off))
+#define find_next_offset(map, off)					\
+		find_next_zero_bit((map)->page, BITS_PER_PAGE, off)
 
 typedef struct pidmap {
 	atomic_t nr_free;
@@ -24,6 +28,68 @@ typedef struct pidmap {
 
 static pidmap_t pidmap_array[PIDMAP_ENTRIES] =
 	 { [ 0 ... PIDMAP_ENTRIES-1 ] = { ATOMIC_INIT(BITS_PER_PAGE), NULL } };
+
+static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(pidmap_lock);
+
+fastcall void free_pidmap(int pid)
+{
+	pidmap_t *map = pidmap_array + pid / BITS_PER_PAGE;
+	int offset = pid & BITS_PER_PAGE_MASK;
+
+	clear_bit(offset, map->page);
+	atomic_inc(&map->nr_free);
+}
+
+int alloc_pidmap(void)
+{
+	int i, offset, max_scan, pid, last = last_pid;
+	pidmap_t *map;
+
+	pid = last + 1;
+	if (pid >= pid_max)
+		pid = RESERVED_PIDS;
+	offset = pid & BITS_PER_PAGE_MASK;
+	map = &pidmap_array[pid/BITS_PER_PAGE];
+	max_scan = (pid_max + BITS_PER_PAGE - 1) / BITS_PER_PAGE - !offset;
+	for (i = 0; i < max_scan; ++i) {
+		if (unlikely(!map->page)) {
+			unsigned long page = get_zeroed_page(GFP_KERNEL);
+			spin_lock(&pidmap_lock);
+			if (map->page)
+				free_page(page);
+			else
+				map->page = (void *) page;
+			spin_unlock(&pidmap_lock);
+			if (unlikely(!map->page))
+				break;
+		}
+		if (likely(atomic_read(&map->nr_free))) {
+			do {
+				if (!test_and_set_bit(offset, map->page)) {
+					atomic_dec(&map->nr_free);
+					last_pid = pid;
+					return pid;
+				}
+				offset = find_next_offset(map, offset);
+				pid = mk_pid(map, offset);
+			} while (offset < BITS_PER_PAGE && pid < pid_max &&
+					(i != max_scan || pid < last ||
+						!((last+1) & BITS_PER_PAGE_MASK)));
+		}
+		if (map < &pidmap_array[(pid_max-1)/BITS_PER_PAGE]) {
+			++map;
+			offset = 0;
+		} else {
+			map = &pidmap_array[0];
+			offset = RESERVED_PIDS;
+			if (unlikely(last == offset))
+				break;
+		}
+		pid = mk_pid(map, offset);
+	}
+	return -1;
+}
+
 
 struct pid * fastcall find_pid(enum pid_type type, int nr)
 {

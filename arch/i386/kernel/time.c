@@ -47,12 +47,62 @@ EXPORT_SYMBOL(jiffies_64);
 
 unsigned long cpu_khz;	/* Detected as we calibrate the TSC */
 
+extern unsigned long wall_jiffies;
+
 DEFINE_SPINLOCK(rtc_lock);
 
 DEFINE_SPINLOCK(i8253_lock);
 EXPORT_SYMBOL(i8253_lock);
 
 struct timer_opts *cur_timer = &timer_none;
+
+/*
+ * This version of gettimeofday has microsecond resolution
+ * and better than microsecond precision on fast x86 machines with TSC.
+ */
+void do_gettimeofday(struct timeval *tv)
+{
+	unsigned long seq;
+	unsigned long usec, sec;
+	unsigned long max_ntp_tick;
+
+	do {
+		unsigned long lost;
+
+		seq = read_seqbegin(&xtime_lock);
+
+		usec = cur_timer->get_offset();
+		lost = jiffies - wall_jiffies;
+
+		/*
+		 * If time_adjust is negative then NTP is slowing the clock
+		 * so make sure not to go into next possible interval.
+		 * Better to lose some accuracy than have time go backwards..
+		 */
+		if (unlikely(time_adjust < 0)) {
+			max_ntp_tick = (USEC_PER_SEC / HZ) - tickadj;
+			usec = min(usec, max_ntp_tick);
+
+			if (lost)
+				usec += lost * max_ntp_tick;
+		}
+		else if (unlikely(lost))
+			usec += lost * (USEC_PER_SEC / HZ);
+
+		sec = xtime.tv_sec;
+		usec += (xtime.tv_nsec / 1000);
+	} while (read_seqretry(&xtime_lock, seq));
+
+	while (usec >= 1000000) {
+		usec -= 1000000;
+		sec++;
+	}
+
+	tv->tv_sec = sec;
+	tv->tv_usec = usec;
+}
+
+EXPORT_SYMBOL(do_gettimeofday);
 
 static int set_rtc_mmss(unsigned long nowtime)
 {

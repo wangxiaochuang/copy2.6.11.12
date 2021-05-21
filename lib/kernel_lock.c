@@ -13,6 +13,23 @@
 
 static __cacheline_aligned_in_smp DEFINE_SPINLOCK(kernel_flag);
 
+int __lockfunc __reacquire_kernel_lock(void)
+{
+	while (!_raw_spin_trylock(&kernel_flag)) {
+		if (test_thread_flag(TIF_NEED_RESCHED))
+			return -EAGAIN;
+		cpu_relax();
+	}
+	preempt_disable();
+	return 0;
+}
+
+void __lockfunc __release_kernel_lock(void)
+{
+	_raw_spin_unlock(&kernel_flag);
+	preempt_enable_no_resched();
+}
+
 #ifdef CONFIG_PREEMPT           // 没配置
     #error "CONFIG_PREEMPT"
 #else

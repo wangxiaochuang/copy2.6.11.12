@@ -72,3 +72,21 @@ int notifier_call_chain(struct notifier_block **n, unsigned long val, void *v)
 EXPORT_SYMBOL(notifier_call_chain);
 
 struct group_info init_groups = { .usage = ATOMIC_INIT(2) };
+
+
+
+
+
+
+
+void groups_free(struct group_info *group_info)
+{
+	if (group_info->blocks[0] != group_info->small_block) {
+		int i;
+		for (i = 0; i < group_info->nblocks; i++)
+			free_page((unsigned long)group_info->blocks[i]);
+	}
+	kfree(group_info);
+}
+
+EXPORT_SYMBOL(groups_free);

@@ -897,9 +897,21 @@ static void __init register_memory(void) {
 		pci_mem_start, gapstart, gapsize);
 }
 
+static int no_replacement __initdata = 0;
+
 void __init alternative_instructions(void) {
-	
+	extern struct alt_instr __alt_instructions[], __alt_instructions_end[];
+	if (no_replacement) 
+		return;
+	panic("in alternative_instructions function");
 }
+static int __init noreplacement_setup(char *s)
+{ 
+     no_replacement = 1; 
+     return 0; 
+} 
+
+__setup("noreplacement", noreplacement_setup);
 
 static char * __init machine_specific_memory_setup(void);
 

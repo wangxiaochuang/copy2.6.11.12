@@ -743,6 +743,12 @@ unsigned int nr_free_highpages (void)
  */
 static DEFINE_PER_CPU(struct page_state, page_states) = {0};
 
+atomic_t nr_pagecache = ATOMIC_INIT(0);
+EXPORT_SYMBOL(nr_pagecache);
+#ifdef CONFIG_SMP
+DEFINE_PER_CPU(long, nr_pagecache_local) = 0;
+#endif
+
 unsigned long __read_page_state(unsigned offset)
 {
 	unsigned long ret = 0;

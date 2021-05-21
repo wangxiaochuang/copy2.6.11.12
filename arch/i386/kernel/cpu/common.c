@@ -26,6 +26,8 @@ static int disable_x86_serial_nr __initdata = 1;
 
 struct cpu_dev * cpu_devs[X86_VENDOR_NUM] = {};
 
+extern void mcheck_init(struct cpuinfo_x86 *c);
+
 extern int disable_pse;
 
 static void default_init(struct cpuinfo_x86 * c) {

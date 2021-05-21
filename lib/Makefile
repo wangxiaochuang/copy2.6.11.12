@@ -7,7 +7,7 @@
 # 	 kobject.o kref.o idr.o div64.o parser.o int_sqrt.o \
 # 	 bitmap.o extable.o kobject_uevent.o prio_tree.o
 lib-y := ctype.o string.o vsprintf.o cmdline.o \
-	radix-tree.o dump_stack.o \
+	rbtree.o radix-tree.o dump_stack.o \
 	kobject.o kref.o idr.o parser.o \
 	bitmap.o extable.o prio_tree.o
 

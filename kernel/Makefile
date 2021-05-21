@@ -10,7 +10,7 @@
 # 	    kthread.o wait.o kfifo.o sys_ni.o
 obj-y = sched.o fork.o exec_domain.o panic.o printk.o profile.o \
 		exit.o itimer.o time.o softirq.o resource.o \
-		timer.o user.o \
+		capability.o ptrace.o timer.o user.o \
 		signal.o sys.o workqueue.o pid.o \
 		rcupdate.o extable.o params.o posix-timers.o \
 		wait.o sys_ni.o
@@ -28,7 +28,7 @@ obj-$(CONFIG_BSD_PROCESS_ACCT) += acct.o
 # obj-$(CONFIG_IKCONFIG_PROC) += configs.o
 # obj-$(CONFIG_STOP_MACHINE) += stop_machine.o
 obj-$(CONFIG_AUDIT) += audit.o
-# obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
+obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
 # obj-$(CONFIG_KPROBES) += kprobes.o
 # obj-$(CONFIG_SYSFS) += ksysfs.o
 obj-$(CONFIG_GENERIC_HARDIRQS) += irq/

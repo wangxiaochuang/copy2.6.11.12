@@ -70,6 +70,18 @@ pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address)
 	return (pte_t *)__get_free_page(GFP_KERNEL|__GFP_REPEAT|__GFP_ZERO);
 }
 
+struct page *pte_alloc_one(struct mm_struct *mm, unsigned long address)
+{
+	struct page *pte;
+
+#ifdef CONFIG_HIGHPTE
+	pte = alloc_pages(GFP_KERNEL|__GFP_HIGHMEM|__GFP_REPEAT|__GFP_ZERO, 0);
+#else
+	pte = alloc_pages(GFP_KERNEL|__GFP_REPEAT|__GFP_ZERO, 0);
+#endif
+	return pte;
+}
+
 DEFINE_SPINLOCK(pgd_lock);
 struct page *pgd_list;
 
@@ -123,8 +135,34 @@ void pgd_dtor(void *pgd, kmem_cache_t *cache, unsigned long unused)
 }
 
 pgd_t *pgd_alloc(struct mm_struct *mm) {
+	int i;
+	pgd_t *pgd = kmem_cache_alloc(pgd_cache, GFP_KERNEL);
+
+	if (PTRS_PER_PMD == 1 || !pgd)
+		return pgd;
+
+	for (i = 0; i < USER_PTRS_PER_PGD; ++i) {
+		pmd_t *pmd = kmem_cache_alloc(pmd_cache, GFP_KERNEL);
+		if (!pmd)
+			goto out_oom;
+		set_pgd(&pgd[i], __pgd(1 + __pa(pmd)));
+	}
+	return pgd;
+
+out_oom:
+	for (i--; i >= 0; i--)
+		kmem_cache_free(pmd_cache, (void *)__va(pgd_val(pgd[i])-1));
+	kmem_cache_free(pgd_cache, pgd);
 	return NULL;
 }
 
 void pgd_free(pgd_t *pgd) {
+	int i;
+
+	/* in the PAE case user pgd entries are overwritten before usage */
+	if (PTRS_PER_PMD > 1)
+		for (i = 0; i < USER_PTRS_PER_PGD; ++i)
+			kmem_cache_free(pmd_cache, (void *)__va(pgd_val(pgd[i])-1));
+	/* in the non-PAE case, clear_page_range() clears user pgd entries */
+	kmem_cache_free(pgd_cache, pgd);
 }

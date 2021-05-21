@@ -9,7 +9,7 @@ extra-y := head.o init_task.o vmlinux.lds
 # 		pci-dma.o i386_ksyms.o i387.o dmi_scan.o bootflag.o \
 # 		doublefault.o quirks.o
 obj-y	:= process.o semaphore.o signal.o entry.o traps.o irq.o vm86.o \
-		ptrace.o time.o setup.o i8259.o \
+		ptrace.o time.o ldt.o setup.o i8259.o \
 		i387.o dmi_scan.o bootflag.o \
 		doublefault.o
 
