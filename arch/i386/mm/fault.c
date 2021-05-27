@@ -64,10 +64,104 @@ fastcall void do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		goto bad_area_nosemaphore;
 	} 
 
+	mm = tsk->mm;
+
+	if (in_atomic() || !mm)
+		goto bad_area_nosemaphore;
+
+	if (!down_read_trylock(&mm->mmap_sem)) {
+		if ((error_code & 4) == 0 &&
+		    !search_exception_tables(regs->eip))
+			goto bad_area_nosemaphore;
+		down_read(&mm->mmap_sem);
+	}
+
+	vma = find_vma(mm, address);
+	if (!vma)
+		goto bad_area;
+	if (vma->vm_start <= address)
+		goto good_area;
+	if (!(vma->vm_flags & VM_GROWSDOWN))
+		goto bad_area;
+	if (error_code & 4) {
+		if (address + 32 < regs->esp)
+			goto bad_area;
+	}
+	if (expand_stack(vma, address))
+		goto bad_area;
+
+good_area:
+	info.si_code = SEGV_ACCERR;
+	write = 0;
+	switch (error_code & 3) {
+		default:
+#ifdef TEST_VERIFY_AREA
+			if (regs->cs == KERNEL_CS)
+				printk("WP fault at %08lx\n", regs->eip);
+#endif
+		case 2:
+			if (!(vma->vm_flags & VM_WRITE))
+				goto bad_area;
+			write++;
+			break;
+		case 1:
+			goto bad_area;
+		case 0:
+			if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
+				goto bad_area;
+	}
+
+survive:
+	switch (handle_mm_fault(mm, vma, address, write)) {
+		case VM_FAULT_MINOR:
+			tsk->min_flt++;
+			break;
+		case VM_FAULT_MAJOR:
+			tsk->maj_flt++;
+			break;
+		case VM_FAULT_SIGBUS:
+			goto do_sigbus;
+		case VM_FAULT_OOM:
+			goto out_of_memory;
+		default:
+			BUG();
+	}
+
+	/*
+	 * Did it hit the DOS screen memory VA from vm86 mode?
+	 */
+	if (regs->eflags & VM_MASK) {
+		unsigned long bit = (address - 0xA0000) >> PAGE_SHIFT;
+		if (bit < 32)
+			tsk->thread.screen_bitmap |= 1 << bit;
+	}
+	up_read(&mm->mmap_sem);
+	return;
+
+bad_area:
+	up_read(&mm->mmap_sem);
+	
 bad_area_nosemaphore:
-    if (error_code & 4) {
-        mypanic("in page fault.c");
-    }
+    /* User mode accesses just cause a SIGSEGV */
+	if (error_code & 4) {
+		/* 
+		 * Valid to do another page fault here because this one came 
+		 * from user space.
+		 */
+		if (is_prefetch(regs, address, error_code))
+			return;
+
+		tsk->thread.cr2 = address;
+		/* Kernel addresses are always protection faults */
+		tsk->thread.error_code = error_code | (address >= TASK_SIZE);
+		tsk->thread.trap_no = 14;
+		info.si_signo = SIGSEGV;
+		info.si_errno = 0;
+		/* info.si_code has been set above */
+		info.si_addr = (void __user *)address;
+		force_sig_info(SIGSEGV, &info, tsk);
+		return;
+	}
 
 #ifdef CONFIG_X86_F00F_BUG
 #error "CONFIG_X86_F00F_BUG"
@@ -76,8 +170,116 @@ no_context:
     /* Are we prepared to handle this kernel fault?  */
 	if (fixup_exception(regs))
 		return;
+	if (is_prefetch(regs, address, error_code))
+ 		return;
+
+	bust_spinlocks(1);
+#ifdef CONFIG_X86_PAE
+	if (error_code & 16) {
+		pte_t *pte = lookup_address(address);
+
+		if (pte && pte_present(*pte) && !pte_exec_kernel(*pte))
+			printk(KERN_CRIT "kernel tried to execute NX-protected page - exploit attempt? (uid: %d)\n", current->uid);
+	}
+#endif
+	if (address < PAGE_SIZE)
+		printk(KERN_ALERT "Unable to handle kernel NULL pointer dereference");
+	else
+		printk(KERN_ALERT "Unable to handle kernel paging request");
+	printk(" at virtual address %08lx\n",address);
+	printk(KERN_ALERT " printing eip:\n");
+	printk("%08lx\n", regs->eip);
+	asm("movl %%cr3,%0":"=r" (page));
+	page = ((unsigned long *) __va(page))[address >> 22];
+	printk(KERN_ALERT "*pde = %08lx\n", page);
+#ifndef CONFIG_HIGHPTE
+	if (page & 1) {
+		page &= PAGE_MASK;
+		address &= 0x003ff000;
+		page = ((unsigned long *) __va(page))[address >> PAGE_SHIFT];
+		printk(KERN_ALERT "*pte = %08lx\n", page);
+	}
+#endif
+	die("Oops", regs, error_code);
+	bust_spinlocks(0);
+	do_exit(SIGKILL);
+
+out_of_memory:
+	up_read(&mm->mmap_sem);
+	if (tsk->pid == 1) {
+		yield();
+		down_read(&mm->mmap_sem);
+		goto survive;
+	}
+	printk("VM: killing process %s\n", tsk->comm);
+	if (error_code & 4)
+		do_exit(SIGKILL);
+	goto no_context;
+
+do_sigbus:
+	up_read(&mm->mmap_sem);
+
+	/* Kernel mode? Handle exceptions or die */
+	if (!(error_code & 4))
+		goto no_context;
+
+	/* User space => ok to do another page fault */
+	if (is_prefetch(regs, address, error_code))
+		return;
+
+	tsk->thread.cr2 = address;
+	tsk->thread.error_code = error_code;
+	tsk->thread.trap_no = 14;
+	info.si_signo = SIGBUS;
+	info.si_errno = 0;
+	info.si_code = BUS_ADRERR;
+	info.si_addr = (void __user *)address;
+	force_sig_info(SIGBUS, &info, tsk);
+	return;
+
 vmalloc_fault:
     {
-        int index = pgd_index(address);
+        /*
+		 * Synchronize this task's top level page-table
+		 * with the 'reference' page table.
+		 *
+		 * Do _not_ use "tsk" here. We might be inside
+		 * an interrupt in the middle of a task switch..
+		 */
+		int index = pgd_index(address);
+		unsigned long pgd_paddr;
+		pgd_t *pgd, *pgd_k;
+		pud_t *pud, *pud_k;
+		pmd_t *pmd, *pmd_k;
+		pte_t *pte_k;
+
+		asm("movl %%cr3,%0":"=r" (pgd_paddr));
+		pgd = index + (pgd_t *)__va(pgd_paddr);
+		pgd_k = init_mm.pgd + index;
+
+		if (!pgd_present(*pgd_k))
+			goto no_context;
+
+		/*
+		 * set_pgd(pgd, *pgd_k); here would be useless on PAE
+		 * and redundant with the set_pmd() on non-PAE. As would
+		 * set_pud.
+		 */
+
+		pud = pud_offset(pgd, address);
+		pud_k = pud_offset(pgd_k, address);
+		if (!pud_present(*pud_k))
+			goto no_context;
+		
+		pmd = pmd_offset(pud, address);
+		pmd_k = pmd_offset(pud_k, address);
+		if (!pmd_present(*pmd_k))
+			goto no_context;
+		set_pmd(pmd, *pmd_k);
+
+		pte_k = pte_offset_kernel(pmd_k, address);
+		if (!pte_present(*pte_k))
+			goto no_context;
+		return;
     }
 }

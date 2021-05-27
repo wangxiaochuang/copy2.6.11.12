@@ -108,3 +108,68 @@ void __vm_stat_account(struct mm_struct *mm, unsigned long flags,
         mm->reserved_vm += pages;
 }
 #endif /* CONFIG_PROC_FS */
+
+/* Look up the first VMA which satisfies  addr < vm_end,  NULL if none. */
+struct vm_area_struct * find_vma(struct mm_struct * mm, unsigned long addr)
+{
+	struct vm_area_struct *vma = NULL;
+
+    if (mm) {
+        vma = mm->mmap_cache;
+        if (!(vma && vma->vm_end > addr && vma->vm_start <= addr)) {
+            struct rb_node * rb_node;
+
+			rb_node = mm->mm_rb.rb_node;
+			vma = NULL;
+
+            while (rb_node) {
+                struct vm_area_struct * vma_tmp;
+
+				vma_tmp = rb_entry(rb_node,
+						struct vm_area_struct, vm_rb);
+
+				if (vma_tmp->vm_end > addr) {
+					vma = vma_tmp;
+					if (vma_tmp->vm_start <= addr)
+						break;
+					rb_node = rb_node->rb_left;
+				} else
+					rb_node = rb_node->rb_right;
+            }
+            if (vma)
+				mm->mmap_cache = vma;
+        }
+    }
+    return vma;
+}
+
+#ifdef CONFIG_STACK_GROWSUP
+#else
+int expand_stack(struct vm_area_struct *vma, unsigned long address)
+{
+    int error;
+
+    if (unlikely(anon_vma_prepare(vma)))
+        return -ENOMEM;
+    anon_vma_lock(vma);
+
+    address &= PAGE_MASK;
+	error = 0;
+
+    /* Somebody else might have raced and expanded it already */
+	if (address < vma->vm_start) {
+		unsigned long size, grow;
+
+		size = vma->vm_end - address;
+		grow = (vma->vm_start - address) >> PAGE_SHIFT;
+
+		error = acct_stack_growth(vma, size, grow);
+		if (!error) {
+			vma->vm_start = address;
+			vma->vm_pgoff -= grow;
+		}
+	}
+	anon_vma_unlock(vma);
+	return error;    
+}
+#endif
