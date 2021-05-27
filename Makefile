@@ -746,7 +746,7 @@ symbol:
 
 .PHONY: qemu bochs kill gdb
 qemu:
-	qemu-system-i386 -s -S -smp 4 -m 1G -drive format=raw,file=../myfd.img,index=0,if=floppy -boot a -curses
+	qemu-system-i386 -s -S -smp 1 -m 1G -drive format=raw,file=../myfd.img,index=0,if=floppy -boot a -curses
 kill:
 	killall qemu-system-i386
 bochs:

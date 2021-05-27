@@ -40,6 +40,32 @@ inline struct timespec current_kernel_time(void)
 
 EXPORT_SYMBOL(current_kernel_time);
 
+
+struct timespec current_fs_time(struct super_block *sb)
+{
+	struct timespec now = current_kernel_time();
+	return timespec_trunc(now, sb->s_time_gran);
+}
+EXPORT_SYMBOL(current_fs_time);
+
+struct timespec timespec_trunc(struct timespec t, unsigned gran)
+{
+	/*
+	 * Division is pretty slow so avoid it for common cases.
+	 * Currently current_kernel_time() never returns better than
+	 * jiffies resolution. Exploit that.
+	 */
+	if (gran <= jiffies_to_usecs(1) * 1000) {
+		/* nothing */
+	} else if (gran == 1000000000) {
+		t.tv_nsec = 0;
+	} else {
+		t.tv_nsec -= t.tv_nsec % gran;
+	}
+	return t;
+}
+EXPORT_SYMBOL(timespec_trunc);
+
 #ifdef CONFIG_TIME_INTERPOLATION
 #error "CONFIG_TIME_INTERPOLATION"
 #else

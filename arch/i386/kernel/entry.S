@@ -578,17 +578,17 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall
-	.long sys_ni_syscall		/* 5 */
+	.long sys_open		/* 5 */
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall
-	.long sys_ni_syscall
+	.long sys_link
 	.long sys_ni_syscall	/* 10 */
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall
-	.long sys_ni_syscall		/* 15 */
+	.long sys_chmod		/* 15 */
 	.long sys_ni_syscall
 	.long sys_ni_syscall	/* old break syscall holder */
 	.long sys_ni_syscall
@@ -612,7 +612,7 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall
-	.long sys_ni_syscall
+	.long sys_mkdir
 	.long sys_ni_syscall		/* 40 */
 	.long sys_ni_syscall
 	.long sys_ni_syscall
@@ -667,7 +667,7 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall
-	.long sys_ni_syscall
+	.long sys_fchmod
 	.long sys_ni_syscall	/* 95 */
 	.long sys_ni_syscall
 	.long sys_ni_syscall
@@ -780,12 +780,12 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall
 	.long sys_ni_syscall	/* 205 */
 	.long sys_ni_syscall
-	.long sys_ni_syscall
+	.long sys_fchown
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall	/* 210 */
 	.long sys_ni_syscall
-	.long sys_ni_syscall
+	.long sys_chown
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall	/* 215 */

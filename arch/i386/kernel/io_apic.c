@@ -20,9 +20,153 @@
 
 #include "io_ports.h"
 
+int (*ioapic_renumber_irq)(int ioapic, int irq);
 static DEFINE_SPINLOCK(ioapic_lock);
 
+/*
+ * # of IRQ routing registers
+ */
+int nr_ioapic_registers[MAX_IO_APICS];
+
+#define MAX_PLUS_SHARED_IRQS NR_IRQS
+#define PIN_MAP_SIZE (MAX_PLUS_SHARED_IRQS + NR_IRQS)
+
+static struct irq_pin_list {
+	int apic, pin, next;
+} irq_2_pin[PIN_MAP_SIZE];
+
+static void set_ioapic_affinity_irq(unsigned int irq, cpumask_t cpumask)
+{
+	unsigned long flags;
+	int pin;
+	struct irq_pin_list *entry = irq_2_pin + irq;
+	unsigned int apicid_value;
+	
+	apicid_value = cpu_mask_to_apicid(cpumask);
+	/* Prepare to do the io_apic_write */
+	apicid_value = apicid_value << 24;
+	spin_lock_irqsave(&ioapic_lock, flags);
+	for (;;) {
+		pin = entry->pin;
+		if (pin == -1)
+			break;
+		io_apic_write(entry->apic, 0x10 + 1 + pin*2, apicid_value);
+		if (!entry->next)
+			break;
+		entry = irq_2_pin + entry->next;
+	}
+	spin_unlock_irqrestore(&ioapic_lock, flags);
+}
+
+#define MAX_PIRQS 8
+int pirq_entries [MAX_PIRQS];
+int pirqs_enabled;
 int skip_ioapic_setup;
+
+static int find_irq_entry(int apic, int pin, int type)
+{
+	int i;
+
+	for (i = 0; i < mp_irq_entries; i++)
+		if (mp_irqs[i].mpc_irqtype == type &&
+		    (mp_irqs[i].mpc_dstapic == mp_ioapics[apic].mpc_apicid ||
+		     mp_irqs[i].mpc_dstapic == MP_APIC_ALL) &&
+		    mp_irqs[i].mpc_dstirq == pin)
+			return i;
+
+	return -1;
+}
+
+/*
+ * Find a specific PCI IRQ entry.
+ * Not an __init, possibly needed by modules
+ */
+static int pin_2_irq(int idx, int apic, int pin);
+
+void __init setup_ioapic_dest(void)
+{
+	int pin, ioapic, irq, irq_entry;
+
+	if (skip_ioapic_setup == 1)
+		return;
+
+	for (ioapic = 0; ioapic < nr_ioapics; ioapic++) {
+		for (pin = 0; pin < nr_ioapic_registers[ioapic]; pin++) {
+			irq_entry = find_irq_entry(ioapic, pin, mp_INT);
+			if (irq_entry == -1)
+				continue;
+			irq = pin_2_irq(irq_entry, ioapic, pin);
+			set_ioapic_affinity_irq(irq, TARGET_CPUS);
+		}
+
+	}
+}
+
+static int pin_2_irq(int idx, int apic, int pin)
+{
+	int irq, i;
+	int bus = mp_irqs[idx].mpc_srcbus;
+
+	/*
+	 * Debugging check, we are in big trouble if this message pops up!
+	 */
+	if (mp_irqs[idx].mpc_dstirq != pin)
+		printk(KERN_ERR "broken BIOS or MPTABLE parser, ayiee!!\n");
+
+	switch (mp_bus_id_to_type[bus])
+	{
+		case MP_BUS_ISA: /* ISA pin */
+		case MP_BUS_EISA:
+		case MP_BUS_MCA:
+		case MP_BUS_NEC98:
+		{
+			irq = mp_irqs[idx].mpc_srcbusirq;
+			break;
+		}
+		case MP_BUS_PCI: /* PCI pin */
+		{
+			/*
+			 * PCI IRQs are mapped in order
+			 */
+			i = irq = 0;
+			while (i < apic)
+				irq += nr_ioapic_registers[i++];
+			irq += pin;
+
+			/*
+			 * For MPS mode, so far only needed by ES7000 platform
+			 */
+			if (ioapic_renumber_irq)
+				irq = ioapic_renumber_irq(apic, irq);
+
+			break;
+		}
+		default:
+		{
+			printk(KERN_ERR "unknown bus type %d.\n",bus); 
+			irq = 0;
+			break;
+		}
+	}
+
+	/*
+	 * PCI IRQ command line redirection. Yes, limits are hardcoded.
+	 */
+	if ((pin >= 16) && (pin <= 23)) {
+		if (pirq_entries[pin-16] != -1) {
+			if (!pirq_entries[pin-16]) {
+				apic_printk(APIC_VERBOSE, KERN_DEBUG
+						"disabling PIRQ%d\n", pin-16);
+			} else {
+				irq = pirq_entries[pin-16];
+				apic_printk(APIC_VERBOSE, KERN_DEBUG
+						"using PIRQ%d -> IRQ %d\n",
+						pin-16, irq);
+			}
+		}
+	}
+	return irq;
+}
 
 /* irq_vectors is indexed by the sum of all RTEs in all I/O APICs. */
 u8 irq_vector[NR_IRQ_VECTORS] = { FIRST_DEVICE_VECTOR , 0 };

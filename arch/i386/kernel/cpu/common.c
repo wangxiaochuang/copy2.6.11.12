@@ -341,6 +341,29 @@ void __init identify_cpu(struct cpuinfo_x86 *c) {
 #endif
 }
 
+void __init print_cpu_info(struct cpuinfo_x86 *c)
+{
+	char *vendor = NULL;
+
+	if (c->x86_vendor < X86_VENDOR_NUM)
+		vendor = this_cpu->c_vendor;
+	else if (c->cpuid_level >= 0)
+		vendor = c->x86_vendor_id;
+
+	if (vendor && strncmp(c->x86_model_id, vendor, strlen(vendor)))
+		printk("%s ", vendor);
+
+	if (!c->x86_model_id[0])
+		printk("%d86", c->x86);
+	else
+		printk("%s", c->x86_model_id);
+
+	if (c->x86_mask || c->cpuid_level >= 0) 
+		printk(" stepping %02x\n", c->x86_mask);
+	else
+		printk("\n");
+}
+
 cpumask_t cpu_initialized __initdata = CPU_MASK_NONE;
 
 extern int intel_cpu_init(void);

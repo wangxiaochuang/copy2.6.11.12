@@ -90,3 +90,43 @@ void groups_free(struct group_info *group_info)
 }
 
 EXPORT_SYMBOL(groups_free);
+
+
+/* a simple bsearch */
+static int groups_search(struct group_info *group_info, gid_t grp)
+{
+	int left, right;
+
+	if (!group_info)
+		return 0;
+
+	left = 0;
+	right = group_info->ngroups;
+	while (left < right) {
+		int mid = (left+right)/2;
+		int cmp = grp - GROUP_AT(group_info, mid);
+		if (cmp > 0)
+			left = mid + 1;
+		else if (cmp < 0)
+			right = mid;
+		else
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * Check whether we're fsgid/egid or in the supplemental group..
+ */
+int in_group_p(gid_t grp)
+{
+	int retval = 1;
+	if (grp != current->fsgid) {
+		get_group_info(current->group_info);
+		retval = groups_search(current->group_info, grp);
+		put_group_info(current->group_info);
+	}
+	return retval;
+}
+
+EXPORT_SYMBOL(in_group_p);

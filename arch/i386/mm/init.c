@@ -247,6 +247,28 @@ unsigned long long __PAGE_KERNEL_EXEC = _PAGE_KERNEL_EXEC;
 extern void __init remap_numa_kva(void);
 #endif
 
+#if defined(CONFIG_PM_DISK) || defined(CONFIG_SOFTWARE_SUSPEND)
+#else
+static inline void save_pg_dir(void)
+{
+}
+#endif
+
+void zap_low_mappings (void)
+{
+	int i;
+
+	save_pg_dir();
+
+    for (i = 0; i < USER_PTRS_PER_PGD; i++)
+#ifdef CONFIG_X86_PAE
+		set_pgd(swapper_pg_dir+i, __pgd(1 + __pa(empty_zero_page)));
+#else
+		set_pgd(swapper_pg_dir+i, __pgd(0));
+#endif
+	flush_tlb_all();
+}
+
 #ifndef CONFIG_DISCONTIGMEM
 void __init zone_sizes_init(void) {
     unsigned long zones_size[MAX_NR_ZONES] = {0, 0, 0};

@@ -658,6 +658,31 @@ void iput(struct inode *inode)
 
 EXPORT_SYMBOL(iput);
 
+
+
+void update_atime(struct inode *inode)
+{
+	struct timespec now;
+
+	if (IS_NOATIME(inode))
+		return;
+	if (IS_NODIRATIME(inode) && S_ISDIR(inode->i_mode))
+		return;
+	if (IS_RDONLY(inode))
+		return;
+
+	now = current_fs_time(inode->i_sb);
+	if (!timespec_equal(&inode->i_atime, &now)) {
+		inode->i_atime = now;
+		mark_inode_dirty_sync(inode);
+	} else {
+		if (!timespec_equal(&inode->i_atime, &now))
+			inode->i_atime = now;
+	}
+}
+
+EXPORT_SYMBOL(update_atime);
+
 int inode_wait(void *word)
 {
 	schedule();

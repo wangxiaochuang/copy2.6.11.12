@@ -439,6 +439,67 @@ void audit_free(struct task_struct *tsk)
 	audit_free_context(context);
 }
 
+
+/* Add a name to the list.  Called from fs/namei.c:getname(). */
+void audit_getname(const char *name)
+{
+	struct audit_context *context = current->audit_context;
+
+	BUG_ON(!context);
+	if (!context->in_syscall) {
+		return;
+	}
+	BUG_ON(context->name_count >= AUDIT_NAMES);
+	context->names[context->name_count].name = name;
+	context->names[context->name_count].ino  = (unsigned long)-1;
+	context->names[context->name_count].rdev = -1;
+	++context->name_count;
+}
+
+void audit_putname(const char *name)
+{
+	struct audit_context *context = current->audit_context;
+
+	BUG_ON(!context);
+	if (!context->in_syscall) {
+		__putname(name);
+	}
+}
+
+EXPORT_SYMBOL(audit_putname);
+
+void audit_inode(const char *name, unsigned long ino, dev_t rdev)
+{
+	int idx;
+	struct audit_context *context = current->audit_context;
+
+	if (!context->in_syscall)
+		return;
+	if (context->name_count
+	    && context->names[context->name_count-1].name
+	    && context->names[context->name_count-1].name == name)
+		idx = context->name_count - 1;
+	else if (context->name_count > 1
+		 && context->names[context->name_count-2].name
+		 && context->names[context->name_count-2].name == name)
+		idx = context->name_count - 2;
+	else {
+		/* FIXME: how much do we care about inodes that have no
+		 * associated name? */
+		if (context->name_count >= AUDIT_NAMES - AUDIT_NAMES_RESERVED)
+			return;
+		idx = context->name_count++;
+		context->names[idx].name = NULL;
+#if AUDIT_DEBUG
+		++context->ino_count;
+#endif
+	}
+	context->names[idx].ino  = ino;
+	context->names[idx].rdev = rdev;
+}
+
+
+
 void audit_get_stamp(struct audit_context *ctx,
 		     struct timespec *t, int *serial)
 {

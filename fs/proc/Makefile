@@ -9,7 +9,7 @@ proc-$(CONFIG_MMU)	:= mmu.o task_mmu.o
 
 # proc-y       += inode.o root.o base.o generic.o array.o \
 # 		kmsg.o proc_tty.o proc_misc.o
-proc-y			+= inode.o root.o generic.o \
+proc-y			+= inode.o root.o base.o generic.o \
 		kmsg.o proc_misc.o
 
 proc-$(CONFIG_PROC_KCORE)	+= kcore.o

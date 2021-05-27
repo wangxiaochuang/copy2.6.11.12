@@ -17,7 +17,48 @@ static inline int __movsl_is_ok(unsigned long a1, unsigned long a2, unsigned lon
 #define movsl_is_ok(a1,a2,n) \
 	__movsl_is_ok((unsigned long)(a1),(unsigned long)(a2),(n))
 
+/*
+ * Copy a null terminated string from userspace.
+ */
 
+#define __do_strncpy_from_user(dst,src,count,res)			   \
+do {									   \
+	int __d0, __d1, __d2;						   \
+	might_sleep();							   \
+	__asm__ __volatile__(						   \
+		"	testl %1,%1\n"					   \
+		"	jz 2f\n"					   \
+		"0:	lodsb\n"					   \
+		"	stosb\n"					   \
+		"	testb %%al,%%al\n"				   \
+		"	jz 1f\n"					   \
+		"	decl %1\n"					   \
+		"	jnz 0b\n"					   \
+		"1:	subl %1,%0\n"					   \
+		"2:\n"							   \
+		".section .fixup,\"ax\"\n"				   \
+		"3:	movl %5,%0\n"					   \
+		"	jmp 2b\n"					   \
+		".previous\n"						   \
+		".section __ex_table,\"a\"\n"				   \
+		"	.align 4\n"					   \
+		"	.long 0b,3b\n"					   \
+		".previous"						   \
+		: "=d"(res), "=c"(count), "=&a" (__d0), "=&S" (__d1),	   \
+		  "=&D" (__d2)						   \
+		: "i"(-EFAULT), "0"(count), "1"(count), "3"(src), "4"(dst) \
+		: "memory");						   \
+} while (0)
+
+
+long
+strncpy_from_user(char *dst, const char __user *src, long count)
+{
+	long res = -EFAULT;
+	if (access_ok(VERIFY_READ, src, 1))
+		__do_strncpy_from_user(dst, src, count, res);
+	return res;
+}
 
 
 #ifdef CONFIG_X86_INTEL_USERCOPY

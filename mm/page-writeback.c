@@ -42,7 +42,10 @@ int vm_dirty_ratio = 40;
  */
 int dirty_writeback_centisecs = 5 * 100;
 
-
+/*
+ * Flag that makes the machine dump writes/reads and block dirtyings.
+ */
+int block_dump;
 
 int pdflush_operation(void (*fn)(unsigned long), unsigned long arg0)
 {

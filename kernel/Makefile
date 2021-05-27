@@ -13,7 +13,7 @@ obj-y = sched.o fork.o exec_domain.o panic.o printk.o profile.o \
 		capability.o ptrace.o timer.o user.o \
 		signal.o sys.o workqueue.o pid.o \
 		rcupdate.o extable.o params.o posix-timers.o \
-		wait.o sys_ni.o
+		kthread.o wait.o sys_ni.o
 
 # obj-$(CONFIG_FUTEX) += futex.o
 # obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
@@ -21,7 +21,7 @@ obj-$(CONFIG_SMP) += cpu.o spinlock.o
 # obj-$(CONFIG_UID16) += uid16.o
 obj-$(CONFIG_MODULES) += module.o
 obj-$(CONFIG_KALLSYMS) += kallsyms.o
-# obj-$(CONFIG_PM) += power/
+obj-$(CONFIG_PM) += power/
 obj-$(CONFIG_BSD_PROCESS_ACCT) += acct.o
 # obj-$(CONFIG_COMPAT) += compat.o
 # obj-$(CONFIG_IKCONFIG) += configs.o

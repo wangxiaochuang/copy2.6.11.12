@@ -172,6 +172,22 @@ static void flush_sigqueue(struct sigpending *queue)
 	}
 }
 
+/*
+ * Flush all pending signals for a task.
+ */
+
+void
+flush_signals(struct task_struct *t)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&t->sighand->siglock, flags);
+	clear_tsk_thread_flag(t,TIF_SIGPENDING);
+	flush_sigqueue(&t->pending);
+	flush_sigqueue(&t->signal->shared_pending);
+	spin_unlock_irqrestore(&t->sighand->siglock, flags);
+}
+
 void __exit_sighand(struct task_struct *tsk)
 {
 	struct sighand_struct * sighand = tsk->sighand;
@@ -455,6 +471,34 @@ void ptrace_notify(int exit_code)
 long do_no_restart_syscall(struct restart_block *param)
 {
 	return -EINTR;
+}
+
+int sigprocmask(int how, sigset_t *set, sigset_t *oldset)
+{
+	int error;
+	sigset_t old_block;
+
+	spin_lock_irq(&current->sighand->siglock);
+	old_block = current->blocked;
+	error = 0;
+	switch(how) {
+	case SIG_BLOCK:
+		sigorsets(&current->blocked, &current->blocked, set);
+		break;
+	case SIG_UNBLOCK:
+		signandsets(&current->blocked, &current->blocked, set);
+		break;
+	case SIG_SETMASK:
+		current->blocked = *set;
+		break;
+	default:
+		error = -EINVAL;
+	}
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
+	if (oldset)
+		*oldset = old_block;
+	return error;
 }
 
 void __init signals_init(void)

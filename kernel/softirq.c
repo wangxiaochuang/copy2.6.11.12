@@ -35,14 +35,63 @@ static inline void wakeup_softirqd(void)
 		wake_up_process(tsk);
 }
 
+#define MAX_SOFTIRQ_RESTART 10
+
 asmlinkage void __do_softirq(void) {
-	
+	struct softirq_action *h;
+	__u32 pending;
+	int max_restart = MAX_SOFTIRQ_RESTART;
+	int cpu;
+
+	pending = local_softirq_pending();
+
+	local_bh_disable();
+	cpu = smp_processor_id();
+restart:
+	local_softirq_pending() = 0;
+
+	local_irq_enable();
+
+	h = softirq_vec;
+
+	do {
+		if (pending & 1) {
+			h->action(h);
+			rcu_bh_qsctr_inc(cpu);
+		}
+		h++;
+		pending >>= 1;
+	} while(pending);
+
+	local_irq_disable();
+
+	pending = local_softirq_pending();
+	if (pending && --max_restart)
+		goto restart;
+
+	if (pending)
+		wakeup_softirqd();
+
+	__local_bh_enable();
 }
 
 #ifndef __ARCH_HAS_DO_SOFTIRQ
 
 asmlinkage void do_softirq(void) {
+	__u32 pending;
+	unsigned long flags;
 
+	if (in_interrupt())
+		return;
+
+	local_irq_save(flags);
+
+	pending = local_softirq_pending();
+
+	if (pending)
+		__do_softirq();
+
+	local_irq_restore(flags);
 }
 
 EXPORT_SYMBOL(do_softirq);
@@ -158,4 +207,85 @@ void __init softirq_init(void)
 {
 	open_softirq(TASKLET_SOFTIRQ, tasklet_action, NULL);
 	open_softirq(HI_SOFTIRQ, tasklet_hi_action, NULL);
+}
+
+static int ksoftirqd(void * __bind_cpu)
+{
+	set_user_nice(current, 19);
+	current->flags |= PF_NOFREEZE;
+
+	set_current_state(TASK_INTERRUPTIBLE);
+
+	while (!kthread_should_stop()) {
+		if (!local_softirq_pending())
+			schedule();
+
+		__set_current_state(TASK_RUNNING);
+
+		while (local_softirq_pending()) {
+			preempt_disable();
+			if (cpu_is_offline((long)__bind_cpu))
+				goto wait_to_die;
+			do_softirq();
+			preempt_enable();
+			cond_resched();
+		}
+
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	__set_current_state(TASK_RUNNING);
+	return 0;
+
+wait_to_die:
+	preempt_enable();
+	/* Wait for kthread_stop */
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	__set_current_state(TASK_RUNNING);
+	return 0;
+}
+
+static int __devinit cpu_callback(struct notifier_block *nfb,
+				  unsigned long action,
+				  void *hcpu)
+{
+	int hotcpu = (unsigned long)hcpu;
+	struct task_struct *p;
+
+	switch (action) {
+	case CPU_UP_PREPARE:
+		BUG_ON(per_cpu(tasklet_vec, hotcpu).list);
+		BUG_ON(per_cpu(tasklet_hi_vec, hotcpu).list);
+		p = kthread_create(ksoftirqd, hcpu, "ksoftirqd/%d", hotcpu);
+		if (IS_ERR(p)) {
+			printk("ksoftirqd for %i failed\n", hotcpu);
+			return NOTIFY_BAD;
+		}
+		kthread_bind(p, hotcpu);
+  		per_cpu(ksoftirqd, hotcpu) = p;
+ 		break;
+	case CPU_ONLINE:
+		wake_up_process(per_cpu(ksoftirqd, hotcpu));
+		break;
+#ifdef CONFIG_HOTPLUG_CPU
+#error "CONFIG_HOTPLUG_CPU"
+#endif /* CONFIG_HOTPLUG_CPU */
+ 	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block __devinitdata cpu_nfb = {
+	.notifier_call = cpu_callback
+};
+
+__init int spawn_ksoftirqd(void)
+{
+	void *cpu = (void *)(long)smp_processor_id();
+	cpu_callback(&cpu_nfb, CPU_UP_PREPARE, cpu);
+	cpu_callback(&cpu_nfb, CPU_ONLINE, cpu);
+	register_cpu_notifier(&cpu_nfb);
+	return 0;
 }

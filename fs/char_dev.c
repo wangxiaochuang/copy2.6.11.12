@@ -18,6 +18,14 @@ static struct kobj_map *cdev_map;
 
 static DEFINE_SPINLOCK(cdev_lock);
 
+void cdev_put(struct cdev *p)
+{
+	if (p) {
+		kobject_put(&p->kobj);
+		module_put(p->owner);
+	}
+}
+
 int chrdev_open(struct inode * inode, struct file * filp)
 {
 	panic("in chrdev_open function");

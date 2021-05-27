@@ -498,6 +498,120 @@ int task_has_perm(struct task_struct *tsk1,
 			    SECCLASS_PROCESS, perms, NULL);
 }
 
+int inode_has_perm(struct task_struct *tsk,
+		   struct inode *inode,
+		   u32 perms,
+		   struct avc_audit_data *adp)
+{
+	struct task_security_struct *tsec;
+	struct inode_security_struct *isec;
+	struct avc_audit_data ad;
+
+	tsec = tsk->security;
+	isec = inode->i_security;
+
+	if (!adp) {
+		adp = &ad;
+		AVC_AUDIT_DATA_INIT(&ad, FS);
+		ad.u.fs.inode = inode;
+	}
+
+	return avc_has_perm(tsec->sid, isec->sid, isec->sclass, perms, adp);
+}
+
+static inline int dentry_has_perm(struct task_struct *tsk,
+				  struct vfsmount *mnt,
+				  struct dentry *dentry,
+				  u32 av)
+{
+	struct inode *inode = dentry->d_inode;
+	struct avc_audit_data ad;
+	AVC_AUDIT_DATA_INIT(&ad,FS);
+	ad.u.fs.mnt = mnt;
+	ad.u.fs.dentry = dentry;
+	return inode_has_perm(tsk, inode, av, &ad);
+}
+
+static inline int file_has_perm(struct task_struct *tsk,
+				struct file *file,
+				u32 av)
+{
+	struct task_security_struct *tsec = tsk->security;
+	struct file_security_struct *fsec = file->f_security;
+	struct vfsmount *mnt = file->f_vfsmnt;
+	struct dentry *dentry = file->f_dentry;
+	struct inode *inode = dentry->d_inode;
+	struct avc_audit_data ad;
+	int rc;
+
+	AVC_AUDIT_DATA_INIT(&ad, FS);
+	ad.u.fs.mnt = mnt;
+	ad.u.fs.dentry = dentry;
+
+	if (tsec->sid != fsec->sid) {
+		rc = avc_has_perm(tsec->sid, fsec->sid,
+				  SECCLASS_FD,
+				  FD__USE,
+				  &ad);
+		if (rc)
+			return rc;
+	}
+
+	/* av is zero if only checking access to the descriptor. */
+	if (av)
+		return inode_has_perm(tsk, inode, av, &ad);
+
+	return 0;
+}
+
+#define MAY_LINK   0
+#define MAY_UNLINK 1
+#define MAY_RMDIR  2
+
+/* Check whether a task can link, unlink, or rmdir a file/directory. */
+static int may_link(struct inode *dir,
+		    struct dentry *dentry,
+		    int kind)
+
+{
+	struct task_security_struct *tsec;
+	struct inode_security_struct *dsec, *isec;
+	struct avc_audit_data ad;
+	u32 av;
+	int rc;
+
+	tsec = current->security;
+	dsec = dir->i_security;
+	isec = dentry->d_inode->i_security;
+
+	AVC_AUDIT_DATA_INIT(&ad, FS);
+	ad.u.fs.dentry = dentry;
+
+	av = DIR__SEARCH;
+	av |= (kind ? DIR__REMOVE_NAME : DIR__ADD_NAME);
+	rc = avc_has_perm(tsec->sid, dsec->sid, SECCLASS_DIR, av, &ad);
+	if (rc)
+		return rc;
+
+	switch (kind) {
+	case MAY_LINK:
+		av = FILE__LINK;
+		break;
+	case MAY_UNLINK:
+		av = FILE__UNLINK;
+		break;
+	case MAY_RMDIR:
+		av = DIR__RMDIR;
+		break;
+	default:
+		printk(KERN_WARNING "may_link:  unrecognized kind %d\n", kind);
+		return 0;
+	}
+
+	rc = avc_has_perm(tsec->sid, isec->sid, isec->sclass, av, &ad);
+	return rc;
+}
+
 int superblock_has_perm(struct task_struct *tsk,
 			struct super_block *sb,
 			u32 perms,
@@ -512,6 +626,33 @@ int superblock_has_perm(struct task_struct *tsk,
 			    perms, ad);
 }
 
+/* Convert a Linux mode and permission mask to an access vector. */
+static inline u32 file_mask_to_av(int mode, int mask)
+{
+	u32 av = 0;
+
+	if ((mode & S_IFMT) != S_IFDIR) {
+		if (mask & MAY_EXEC)
+			av |= FILE__EXECUTE;
+		if (mask & MAY_READ)
+			av |= FILE__READ;
+
+		if (mask & MAY_APPEND)
+			av |= FILE__APPEND;
+		else if (mask & MAY_WRITE)
+			av |= FILE__WRITE;
+
+	} else {
+		if (mask & MAY_EXEC)
+			av |= DIR__SEARCH;
+		if (mask & MAY_WRITE)
+			av |= DIR__WRITE;
+		if (mask & MAY_READ)
+			av |= DIR__READ;
+	}
+
+	return av;
+}
 
 static int selinux_ptrace(struct task_struct *parent, struct task_struct *child)
 {
@@ -683,7 +824,12 @@ static void selinux_inode_post_create(struct inode *dir, struct dentry *dentry, 
 
 static int selinux_inode_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry)
 {
-    return 0;
+    int rc;
+
+	rc = secondary_ops->inode_link(old_dentry,dir,new_dentry);
+	if (rc)
+		return rc;
+	return may_link(dir, old_dentry, MAY_LINK);
 }
 
 static void selinux_inode_post_link(struct dentry *old_dentry, struct inode *inode, struct dentry *new_dentry)
@@ -743,18 +889,35 @@ static void selinux_inode_post_rename(struct inode *old_inode, struct dentry *ol
 
 static int selinux_inode_readlink(struct dentry *dentry)
 {
-    return 0;
+    return dentry_has_perm(current, NULL, dentry, FILE__READ);
 }
 
 static int selinux_inode_follow_link(struct dentry *dentry, struct nameidata *nameidata)
 {
-    return 0;
+    int rc;
+
+	rc = secondary_ops->inode_follow_link(dentry,nameidata);
+	if (rc)
+		return rc;
+	return dentry_has_perm(current, NULL, dentry, FILE__READ);
 }
 
 static int selinux_inode_permission(struct inode *inode, int mask,
 				    struct nameidata *nd)
 {
-    return 0;
+    int rc;
+
+	rc = secondary_ops->inode_permission(inode, mask, nd);
+	if (rc)
+		return rc;
+
+	if (!mask) {
+		/* No permission to check.  Existence test. */
+		return 0;
+	}
+
+	return inode_has_perm(current, inode,
+			       file_mask_to_av(inode->i_mode, mask), NULL);
 }
 
 static int selinux_inode_setattr(struct dentry *dentry, struct iattr *iattr)
@@ -810,7 +973,19 @@ static int selinux_inode_listsecurity(struct inode *inode, char *buffer, size_t 
 
 static int selinux_file_permission(struct file *file, int mask)
 {
-    return 0;
+    struct inode *inode = file->f_dentry->d_inode;
+
+	if (!mask) {
+		/* No permission to check.  Existence test. */
+		return 0;
+	}
+
+	/* file_mask_to_av won't add FILE__WRITE if MAY_APPEND is set */
+	if ((file->f_flags & O_APPEND) && (mask & MAY_WRITE))
+		mask |= MAY_APPEND;
+
+	return file_has_perm(current, file,
+			     file_mask_to_av(inode->i_mode, mask));
 }
 
 static int selinux_file_alloc_security(struct file *file)

@@ -217,7 +217,33 @@ int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
 
 	if (!cpus)
 		return 0;
-	panic("in smp_call_function function");
+	
+	/* Can deadlock when called with interrupts disabled */
+	WARN_ON(irqs_disabled());
+
+	data.func = func;
+	data.info = info;
+	atomic_set(&data.started, 0);
+	data.wait = wait;
+	if (wait)
+		atomic_set(&data.finished, 0);
+
+	spin_lock(&call_lock);
+	call_data = &data;
+	mb();
+	
+	/* Send a message to all other CPUs and wait for them to respond */
+	send_IPI_allbutself(CALL_FUNCTION_VECTOR);
+
+	/* Wait for response */
+	while (atomic_read(&data.started) != cpus)
+		cpu_relax();
+
+	if (wait)
+		while (atomic_read(&data.finished) != cpus)
+			cpu_relax();
+	spin_unlock(&call_lock);
+
 	return 0;
 }
 
@@ -228,8 +254,31 @@ int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
  */
 fastcall void smp_reschedule_interrupt(struct pt_regs *regs)
 {
+	ack_APIC_irq();
 }
 
 fastcall void smp_call_function_interrupt(struct pt_regs *regs)
 {
+	void (*func) (void *info) = call_data->func;
+	void *info = call_data->info;
+	int wait = call_data->wait;
+
+	ack_APIC_irq();
+	/*
+	 * Notify initiating CPU that I've grabbed the data and am
+	 * about to execute the function
+	 */
+	mb();
+	atomic_inc(&call_data->started);
+	/*
+	 * At this point the info structure may be out of scope unless wait==1
+	 */
+	irq_enter();
+	(*func)(info);
+	irq_exit();
+
+	if (wait) {
+		mb();
+		atomic_inc(&call_data->finished);
+	}
 }

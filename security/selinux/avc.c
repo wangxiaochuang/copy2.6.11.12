@@ -287,7 +287,7 @@ void avc_audit(u32 ssid, u32 tsid,
                u16 tclass, u32 requested,
                struct av_decision *avd, int result, struct avc_audit_data *a)
 {
-	printk("######## avc_audit not implement");
+	printk("######## avc_audit not implement\n");
 }
 
 static int avc_update_node(u32 event, u32 perms, u32 ssid, u32 tsid, u16 tclass)

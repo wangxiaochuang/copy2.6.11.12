@@ -267,6 +267,12 @@ next_pgd:
 	return err;
 }
 
+int vmtruncate(struct inode * inode, loff_t offset)
+{
+	panic("in vmtruncate function");
+	return 0;
+}
+
 #ifndef __ARCH_HAS_4LEVEL_HACK
 
 pud_t fastcall *__pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)

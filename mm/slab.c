@@ -1630,6 +1630,34 @@ static void drain_array_locked(kmem_cache_t *cachep,
 	}
 }
 
+int fastcall kmem_ptr_validate(kmem_cache_t *cachep, void *ptr)
+{
+	unsigned long addr = (unsigned long) ptr;
+	unsigned long min_addr = PAGE_OFFSET;
+	unsigned long align_mask = BYTES_PER_WORD-1;
+	unsigned long size = cachep->objsize;
+	struct page *page;
+
+	if (unlikely(addr < min_addr))
+		goto out;
+	if (unlikely(addr > (unsigned long)high_memory - size))
+		goto out;
+	if (unlikely(addr & align_mask))
+		goto out;
+	if (unlikely(!kern_addr_valid(addr)))
+		goto out;
+	if (unlikely(!kern_addr_valid(addr + size - 1)))
+		goto out;
+	page = virt_to_page(ptr);
+	if (unlikely(!PageSlab(page)))
+		goto out;
+	if (unlikely(GET_PAGE_CACHE(page) != cachep))
+		goto out;
+	return 1;
+out:
+	return 0;
+}
+
 static void cache_reap(void *unused)
 {
 }

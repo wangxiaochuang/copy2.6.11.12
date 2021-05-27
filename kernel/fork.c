@@ -849,6 +849,24 @@ bad_fork_free:
 	goto fork_out;
 }
 
+struct pt_regs * __devinit __attribute__((weak)) idle_regs(struct pt_regs *regs)
+{
+	memset(regs, 0, sizeof(struct pt_regs));
+	return regs;
+}
+
+task_t * __devinit fork_idle(int cpu)
+{
+	task_t *task;
+	struct pt_regs regs;
+
+	task = copy_process(CLONE_VM, 0, idle_regs(&regs), 0, NULL, NULL, 0);
+	if (!task)
+		return ERR_PTR(-ENOMEM);
+	init_idle(task, cpu);
+	unhash_process(task);
+	return task;
+}
 static inline int fork_traceflag (unsigned clone_flags)
 {
 	if (clone_flags & CLONE_UNTRACED)
@@ -927,7 +945,7 @@ long do_fork(unsigned long clone_flags,
 		pid = PTR_ERR(p);
 	}
 
-	return 0;
+	return pid;
 }
 
 /* SLAB cache for signal_struct structures (tsk->signal) */

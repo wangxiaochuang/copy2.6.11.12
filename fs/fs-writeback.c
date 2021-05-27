@@ -10,6 +10,53 @@
 
 extern struct super_block *blockdev_superblock;
 
+void __mark_inode_dirty(struct inode *inode, int flags)
+{
+	struct super_block *sb = inode->i_sb;
+
+	if (flags & (I_DIRTY_SYNC | I_DIRTY_DATASYNC)) {
+		if (sb->s_op->dirty_inode)
+			sb->s_op->dirty_inode(inode);
+	}
+
+	smp_mb();
+
+	/* avoid the locking if we can */
+	if ((inode->i_state & flags) == flags)
+		return;
+
+	if (unlikely(block_dump)) {
+		panic("in __mark_inode_dirty function");
+	}
+
+	spin_lock(&inode_lock);
+	if ((inode->i_state & flags) != flags) {
+		const int was_dirty = inode->i_state & I_DIRTY;
+
+		inode->i_state |= flags;
+
+		if (inode->i_state & I_LOCK)
+			goto out;
+
+		if (!S_ISBLK(inode->i_mode)) {
+			if (hlist_unhashed(&inode->i_hash))
+				goto out;
+		}
+		if (inode->i_state & (I_FREEING|I_CLEAR))
+			goto out;
+
+		if (!was_dirty) {
+			inode->dirtied_when = jiffies;
+			list_move(&inode->i_list, &sb->s_dirty);
+		}
+	}
+
+out:
+	spin_unlock(&inode_lock);
+}
+
+EXPORT_SYMBOL(__mark_inode_dirty);
+
 static int write_inode(struct inode *inode, int sync)
 {
 	if (inode->i_sb->s_op->write_inode && !is_bad_inode(inode))

@@ -20,6 +20,7 @@
 int sysctl_vfs_cache_pressure = 100;
 
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(dcache_lock);
+seqlock_t rename_lock __cacheline_aligned_in_smp = SEQLOCK_UNLOCKED;
 
 EXPORT_SYMBOL(dcache_lock);
 
@@ -27,9 +28,11 @@ static kmem_cache_t *dentry_cache;
 
 #define DNAME_INLINE_LEN (sizeof(struct dentry)-offsetof(struct dentry,d_iname))
 
+#define D_HASHBITS     d_hash_shift
+#define D_HASHMASK     d_hash_mask
+
 static unsigned int d_hash_mask;
 static unsigned int d_hash_shift;
-
 static struct hlist_head *dentry_hashtable;
 static LIST_HEAD(dentry_unused);
 
@@ -133,6 +136,51 @@ kill_it: {
 		dentry = parent;
 		goto repeat;
 	}
+}
+
+int d_invalidate(struct dentry * dentry)
+{
+	/*
+	 * If it's already been dropped, return OK.
+	 */
+	spin_lock(&dcache_lock);
+	if (d_unhashed(dentry)) {
+		spin_unlock(&dcache_lock);
+		return 0;
+	}
+	/*
+	 * Check whether to do a partial shrink_dcache
+	 * to get rid of unused child entries.
+	 */
+	if (!list_empty(&dentry->d_subdirs)) {
+		spin_unlock(&dcache_lock);
+		shrink_dcache_parent(dentry);
+		spin_lock(&dcache_lock);
+	}
+
+	/*
+	 * Somebody else still using it?
+	 *
+	 * If it's a directory, we can't drop it
+	 * for fear of somebody re-populating it
+	 * with children (even though dropping it
+	 * would make it unreachable from the root,
+	 * we might still populate it if it was a
+	 * working directory or similar).
+	 */
+	spin_lock(&dentry->d_lock);
+	if (atomic_read(&dentry->d_count) > 1) {
+		if (dentry->d_inode && S_ISDIR(dentry->d_inode->i_mode)) {
+			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
+			return -EBUSY;
+		}
+	}
+
+	__d_drop(dentry);
+	spin_unlock(&dentry->d_lock);
+	spin_unlock(&dcache_lock);
+	return 0;
 }
 
 static inline struct dentry * __dget_locked(struct dentry *dentry)
@@ -433,6 +481,120 @@ struct dentry * d_alloc_root(struct inode * root_inode)
 	}
 	return res;
 }
+
+static inline struct hlist_head *d_hash(struct dentry *parent,
+					unsigned long hash)
+{
+	hash += ((unsigned long) parent ^ GOLDEN_RATIO_PRIME) / L1_CACHE_BYTES;
+	hash = hash ^ ((hash ^ GOLDEN_RATIO_PRIME) >> D_HASHBITS);
+	return dentry_hashtable + (hash & D_HASHMASK);
+}
+
+struct dentry * d_alloc_anon(struct inode *inode)
+{
+	return NULL;
+}
+
+struct dentry *d_splice_alias(struct inode *inode, struct dentry *dentry)
+{
+	return NULL;
+}
+
+struct dentry * d_lookup(struct dentry * parent, struct qstr * name)
+{
+	struct dentry *dentry = NULL;
+	unsigned long seq;
+
+	do {
+		seq = read_seqbegin(&rename_lock);
+		dentry = __d_lookup(parent, name);
+		if (dentry)
+			break;
+	} while (read_seqretry(&rename_lock, seq));
+	return dentry;
+}
+
+struct dentry * __d_lookup(struct dentry * parent, struct qstr * name)
+{
+	unsigned int len = name->len;
+	unsigned int hash = name->hash;
+	const unsigned char *str = name->name;
+	struct hlist_head *head = d_hash(parent, hash);
+	struct dentry *found = NULL;
+	struct hlist_node *node;
+
+	rcu_read_lock();
+
+	hlist_for_each_rcu(node, head) {
+		struct dentry *dentry;
+		struct qstr *qstr;
+
+		dentry = hlist_entry(node, struct dentry, d_hash);
+
+		if (dentry->d_name.hash != hash)
+			continue;
+		if (dentry->d_parent != parent)
+			continue;
+
+		spin_lock(&dentry->d_lock);
+		if (dentry->d_parent != parent)
+			goto next;
+
+		qstr = &dentry->d_name;
+		if (parent->d_op && parent->d_op->d_compare) {
+			if (parent->d_op->d_compare(parent, qstr, name))
+				goto next;
+		} else {
+			if (qstr->len != len)
+				goto next;
+			if (memcmp(qstr->name, str, len))
+				goto next;
+		}
+
+		if (!d_unhashed(dentry)) {
+			atomic_inc(&dentry->d_count);
+			found = dentry;
+		}
+
+		spin_unlock(&dentry->d_lock);
+		break;
+next:
+		spin_unlock(&dentry->d_lock);
+	}
+	rcu_read_unlock();
+
+ 	return found;
+}
+
+int d_validate(struct dentry *dentry, struct dentry *dparent)
+{
+	struct hlist_head *base;
+	struct hlist_node *lhp;
+
+	/* Check whether the ptr might be valid at all.. */
+	if (!kmem_ptr_validate(dentry_cache, dentry))
+		goto out;
+
+	if (dentry->d_parent != dparent)
+		goto out;
+
+	spin_lock(&dcache_lock);
+	base = d_hash(dparent, dentry->d_name.hash);
+	hlist_for_each(lhp,base) { 
+		/* hlist_for_each_rcu() not required for d_hash list
+		 * as it is parsed under dcache_lock
+		 */
+		if (dentry == hlist_entry(lhp, struct dentry, d_hash)) {
+			__dget_locked(dentry);
+			spin_unlock(&dcache_lock);
+			return 1;
+		}
+	}
+	spin_unlock(&dcache_lock);
+out:
+	return 0;
+}
+
 
 static __initdata unsigned long dhash_entries;
 

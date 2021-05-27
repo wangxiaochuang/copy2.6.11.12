@@ -123,6 +123,58 @@ int fastcall attach_pid(task_t *task, enum pid_type type, int nr)
 	return 0;
 }
 
+static fastcall int __detach_pid(task_t *task, enum pid_type type)
+{
+	struct pid *pid, *pid_next;
+	int nr = 0;
+
+	pid = &task->pids[type];
+	if (!hlist_unhashed(&pid->pid_chain)) {
+		hlist_del(&pid->pid_chain);
+
+		if (list_empty(&pid->pid_list))
+			nr = pid->nr;
+		else {
+			pid_next = list_entry(pid->pid_list.next, 
+						struct pid, pid_list);
+			hlist_add_head(&pid_next->pid_chain,
+				&pid_hash[type][pid_hashfn(pid_next->nr)]);
+		}
+	}
+
+	list_del(&pid->pid_list);
+	pid->nr = 0;
+
+	return nr;
+}
+
+void fastcall detach_pid(task_t *task, enum pid_type type)
+{
+	int tmp, nr;
+
+	nr = __detach_pid(task, type);
+	if (!nr)
+		return;
+	for (tmp = PIDTYPE_MAX; --tmp >= 0;)
+		if (tmp != type && find_pid(tmp, nr))
+			return;
+
+	free_pidmap(nr);
+}
+
+task_t *find_task_by_pid_type(int type, int nr)
+{
+	struct pid *pid;
+
+	pid = find_pid(type, nr);
+	if (!pid)
+		return NULL;
+
+	return pid_task(&pid->pid_list, type);
+}
+
+EXPORT_SYMBOL(find_task_by_pid_type);
+
 /*
  * The pid hash table is scaled according to the amount of memory in the
  * machine.  From a minimum of 16 slots up to 4096 slots at one gigabyte or

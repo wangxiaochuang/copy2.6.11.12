@@ -109,6 +109,8 @@ extern void softirq_init(void);
 /* Untouched command line (eg. for /proc) saved by arch-specific code. */
 char saved_command_line[COMMAND_LINE_SIZE];
 
+static unsigned int max_cpus = NR_CPUS;
+
 static char * argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
 char * envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
 static const char *panic_later, *panic_param;
@@ -238,6 +240,22 @@ static void __init setup_per_cpu_areas(void) {
 
 #endif
 
+/* Called by boot processor to activate the rest. */
+static void __init smp_init(void)
+{
+	unsigned int i;
+
+	for_each_present_cpu(i) {
+		if (num_online_cpus() >= max_cpus)
+			break;
+		if (!cpu_online(i))
+			cpu_up(i);
+	}
+	/* Any cleanup work */
+	printk("Brought up %ld CPUs\n", (long)num_online_cpus());
+	smp_cpus_done(max_cpus);
+}
+
 static void noinline rest_init(void)
 	__releases(kernel_lock)
 {
@@ -350,12 +368,57 @@ asmlinkage void __init start_kernel(void) {
 	// check_bugs();
 	// acpi_early_init();
 	rest_init();
-    for(;;);
+}
+
+struct task_struct *child_reaper = &init_task;
+
+
+
+static void do_pre_smp_initcalls(void)
+{
+	extern int spawn_ksoftirqd(void);
+#ifdef CONFIG_SMP
+	extern int migration_init(void);
+
+	migration_init();
+#endif
+	spawn_ksoftirqd();
+}
+
+static inline void fixup_cpu_present_map(void)
+{
+#ifdef CONFIG_SMP
+	int i;
+
+	if (cpus_empty(cpu_present_map)) {
+		for_each_cpu(i) {
+			cpu_set(i, cpu_present_map);
+		}
+	}
+#endif
 }
 
 static int init(void * unused)
 {
+	lock_kernel();
+
+	child_reaper = current;
+
+	smp_prepare_cpus(max_cpus);
+
+	do_pre_smp_initcalls();
+
+	fixup_cpu_present_map();
+	smp_init();
+	sched_init_smp();
+
+	/*
+	 * Do this before initcalls, because some drivers want to access
+	 * firmware files.
+	 */
+	populate_rootfs();
+
 	for(;;)
-		printk("in init\n");
+		printk("int init\n");
 	return 0;
 }

@@ -26,6 +26,36 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+static void __unhash_process(struct task_struct *p)
+{
+	nr_threads--;
+	detach_pid(p, PIDTYPE_PID);
+	detach_pid(p, PIDTYPE_TGID);
+	if (thread_group_leader(p)) {
+		detach_pid(p, PIDTYPE_PGID);
+		detach_pid(p, PIDTYPE_SID);
+		if (p->pid)
+			__get_cpu_var(process_counts)--;
+	}
+	REMOVE_LINKS(p);
+}
+
+/* we are using it only for SMP init */
+
+void unhash_process(struct task_struct *p)
+{
+	struct dentry *proc_dentry;
+
+	spin_lock(&p->proc_lock);
+	proc_dentry = proc_pid_unhash(p);
+	write_lock_irq(&tasklist_lock);
+	__unhash_process(p);
+	write_unlock_irq(&tasklist_lock);
+	spin_unlock(&p->proc_lock);
+	proc_pid_flush(proc_dentry);
+}
+
+
 static inline void close_files(struct files_struct * files)
 {
 	int i, j;

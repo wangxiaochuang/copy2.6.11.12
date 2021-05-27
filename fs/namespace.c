@@ -67,6 +67,27 @@ void free_vfsmnt(struct vfsmount *mnt)
 	kmem_cache_free(mnt_cache, mnt);
 }
 
+struct vfsmount *lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
+{
+	struct list_head *head = mount_hashtable + hash(mnt, dentry);
+	struct list_head *tmp = head;
+	struct vfsmount *p, *found = NULL;
+
+	spin_lock(&vfsmount_lock);
+	for (;;) {
+		tmp = tmp->next;
+		p = NULL;
+		if (tmp == head)
+			break;
+		p = list_entry(tmp, struct vfsmount, mnt_hash);
+		if (p->mnt_parent == mnt && p->mnt_mountpoint == dentry) {
+			found = mntget(p);
+			break;
+		}
+	}
+	spin_unlock(&vfsmount_lock);
+	return found;
+}
 
 static inline int check_mnt(struct vfsmount *mnt)
 {

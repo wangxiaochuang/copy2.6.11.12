@@ -14,6 +14,8 @@
 #include <asm/system.h>
 #include <asm/uaccess.h>
 
+extern void free_proc_entry(struct proc_dir_entry *);
+
 static inline struct proc_dir_entry * de_get(struct proc_dir_entry *de)
 {
 	if (de)
