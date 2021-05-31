@@ -10,6 +10,12 @@
 #include <linux/bitops.h>
 #include <linux/smp_lock.h>
 
+struct proc_dir_entry *proc_net, *proc_net_stat, *proc_bus, *proc_root_fs, *proc_root_driver;
+
+#ifdef CONFIG_SYSCTL
+struct proc_dir_entry *proc_sys_root;
+#endif
+
 static struct super_block *proc_get_sb(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
 {
@@ -37,6 +43,32 @@ void __init proc_root_init(void)
 		unregister_filesystem(&proc_fs_type);
 		return;
 	}
+	proc_misc_init();
+	proc_net = proc_mkdir("net", NULL);
+	proc_net_stat = proc_mkdir("net/stat", NULL);
+
+#ifdef CONFIG_SYSVIPC
+	proc_mkdir("sysvipc", NULL);
+#endif
+#ifdef CONFIG_SYSCTL
+	proc_sys_root = proc_mkdir("sys", NULL);
+#endif
+#if defined(CONFIG_BINFMT_MISC) || defined(CONFIG_BINFMT_MISC_MODULE)
+	proc_mkdir("sys/fs", NULL);
+	proc_mkdir("sys/fs/binfmt_misc", NULL);
+#endif
+	proc_root_fs = proc_mkdir("fs", NULL);
+	proc_root_driver = proc_mkdir("driver", NULL);
+	proc_mkdir("fs/nfsd", NULL); /* somewhere for the nfsd filesystem to be mounted */
+#if defined(CONFIG_SUN_OPENPROMFS) || defined(CONFIG_SUN_OPENPROMFS_MODULE)
+	/* just give it a mountpoint */
+	proc_mkdir("openprom", NULL);
+#endif
+	proc_tty_init();
+#ifdef CONFIG_PROC_DEVICETREE
+	proc_device_tree_init();
+#endif
+	proc_bus = proc_mkdir("bus", NULL);
 }
 
 static struct dentry *proc_root_lookup(struct inode * dir, struct dentry * dentry, struct nameidata *nd)

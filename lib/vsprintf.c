@@ -444,6 +444,19 @@ int vscnprintf(char *buf, size_t size, const char *fmt, va_list args) {
 
 EXPORT_SYMBOL(vscnprintf);
 
+int snprintf(char * buf, size_t size, const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	va_start(args, fmt);
+	i=vsnprintf(buf,size,fmt,args);
+	va_end(args);
+	return i;
+}
+
+EXPORT_SYMBOL(snprintf);
+
 int vsprintf(char *buf, const char *fmt, va_list args)
 {
 	return vsnprintf(buf, (~0U)>>1, fmt, args);

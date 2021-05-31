@@ -43,6 +43,13 @@
 #define TTY_PARANOIA_CHECK 1
 #define CHECK_TTY_COUNT 1
 
+/* This list gets poked at by procfs and various bits of boot up code. This
+   could do with some rationalisation such as pulling the tty proc function
+   into this file */
+   
+LIST_HEAD(tty_drivers);			/* linked list of tty drivers */
+
+
 /* Semaphore to protect creating and releasing a tty. This is shared with
    vt.c for deeply disgusting hack reasons */
 DECLARE_MUTEX(tty_sem);
@@ -82,6 +89,11 @@ int tty_register_ldisc(int disc, struct tty_ldisc *new_ldisc) {
 }
 
 EXPORT_SYMBOL(tty_register_ldisc);
+
+void disassociate_ctty(int on_exit)
+{
+    panic("in disassociate_ctty function");
+}
 
 /*
  * Initialize the console device. This is called *early*, so

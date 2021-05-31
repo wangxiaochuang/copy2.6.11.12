@@ -343,6 +343,8 @@ void __init noexec_setup(const char *str) {
 	}
 }
 
+int nx_enabled = 0;
+
 void __init paging_init(void) {
 #ifdef CONFIG_X86_PAE
 #error "CONFIG_X86_PAE"

@@ -595,6 +595,39 @@ out:
 	return 0;
 }
 
+void d_delete(struct dentry * dentry)
+{
+	spin_lock(&dcache_lock);
+	spin_lock(&dentry->d_lock);
+	if (atomic_read(&dentry->d_count) == 1) {
+		dentry_iput(dentry);
+		return;
+	}
+
+	if (!d_unhashed(dentry))
+		__d_drop(dentry);
+
+	spin_unlock(&dentry->d_lock);
+	spin_unlock(&dcache_lock);
+}
+
+static void __d_rehash(struct dentry * entry, struct hlist_head *list)
+{
+
+ 	entry->d_flags &= ~DCACHE_UNHASHED;
+ 	hlist_add_head_rcu(&entry->d_hash, list);
+}
+
+void d_rehash(struct dentry * entry)
+{
+	struct hlist_head *list = d_hash(entry->d_parent, entry->d_name.hash);
+	spin_lock(&dcache_lock);
+	spin_lock(&entry->d_lock);
+	__d_rehash(entry, list);
+	spin_unlock(&entry->d_lock);
+	spin_unlock(&dcache_lock);
+}
+
 
 static __initdata unsigned long dhash_entries;
 

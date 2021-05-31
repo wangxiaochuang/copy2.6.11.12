@@ -126,9 +126,57 @@ int do_writepages(struct address_space *mapping, struct writeback_control *wbc)
 
 int __set_page_dirty_nobuffers(struct page *page)
 {
-	panic("in __set_page_dirty_nobuffers function");
+	int ret = 0;
+
+	if (!TestSetPageDirty(page)) {
+		struct address_space *mapping = page_mapping(page);
+		struct address_space *mapping2;
+
+		if (mapping) {
+			spin_lock_irq(&mapping->tree_lock);
+			mapping2 = page_mapping(page);
+			if (mapping2) { /* Race with truncate? */
+				BUG_ON(mapping2 != mapping);
+				if (!mapping->backing_dev_info->memory_backed)
+					inc_page_state(nr_dirty);
+				radix_tree_tag_set(&mapping->page_tree,
+					page_index(page), PAGECACHE_TAG_DIRTY);
+			}
+			spin_unlock_irq(&mapping->tree_lock);
+			if (mapping->host) {
+				/* !PageAnon && !swapper_space */
+				__mark_inode_dirty(mapping->host,
+							I_DIRTY_PAGES);
+			}
+		}
+	}
+	return ret;
+}
+
+EXPORT_SYMBOL(__set_page_dirty_nobuffers);
+
+int redirty_page_for_writepage(struct writeback_control *wbc, struct page *page)
+{
+	wbc->pages_skipped++;
+	return __set_page_dirty_nobuffers(page);
+}
+EXPORT_SYMBOL(redirty_page_for_writepage);
+
+int fastcall set_page_dirty(struct page *page)
+{
+	struct address_space *mapping = page_mapping(page);
+
+	if (likely(mapping)) {
+		int (*spd)(struct page *) = mapping->a_ops->set_page_dirty;
+		if (spd)
+			return (*spd)(page);
+		return __set_page_dirty_buffers(page);
+	}
+	if (!PageDirty(page))
+		SetPageDirty(page);
 	return 0;
 }
+EXPORT_SYMBOL(set_page_dirty);
 
 int clear_page_dirty_for_io(struct page *page)
 {

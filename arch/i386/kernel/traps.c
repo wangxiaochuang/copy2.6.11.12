@@ -137,6 +137,11 @@ void dump_stack(void) {
 
 EXPORT_SYMBOL(dump_stack);
 
+void die(const char * str, struct pt_regs * regs, long err)
+{
+	panic("in die function");
+}
+
 
 static void do_trap(int trapnr, int signr, char *str, int vm86,
 			   struct pt_regs * regs, long error_code, siginfo_t *info)

@@ -217,6 +217,33 @@ static int proc_register(struct proc_dir_entry * dir, struct proc_dir_entry * dp
 	return 0;
 }
 
+static void proc_kill_inodes(struct proc_dir_entry *de)
+{
+	struct list_head *p;
+	struct super_block *sb = proc_mnt->mnt_sb;
+
+	/*
+	 * Actually it's a partial revoke().
+	 */
+	file_list_lock();
+	list_for_each(p, &sb->s_files) {
+		struct file * filp = list_entry(p, struct file, f_list);
+		struct dentry * dentry = filp->f_dentry;
+		struct inode * inode;
+		struct file_operations *fops;
+
+		if (dentry->d_op != &proc_dentry_operations)
+			continue;
+		inode = dentry->d_inode;
+		if (PDE(inode) != de)
+			continue;
+		fops = filp->f_op;
+		filp->f_op = NULL;
+		fops_put(fops);
+	}
+	file_list_unlock();
+}
+
 static struct proc_dir_entry *proc_create(struct proc_dir_entry **parent,
 					  const char *name,
 					  mode_t mode,
@@ -344,4 +371,38 @@ void free_proc_entry(struct proc_dir_entry *de)
 	if (S_ISLNK(de->mode) && de->data)
 		kfree(de->data);
 	kfree(de);
+}
+
+void remove_proc_entry(const char *name, struct proc_dir_entry *parent)
+{
+	struct proc_dir_entry **p;
+	struct proc_dir_entry *de;
+	const char *fn = name;
+	int len;
+
+	if (!parent && xlate_proc_name(name, &parent, &fn) != 0)
+		goto out;
+	len = strlen(fn);
+	for (p = &parent->subdir; *p; p=&(*p)->next ) {
+		if (!proc_match(len, fn, *p))
+			continue;
+		de = *p;
+		*p = de->next;
+		de->next = NULL;
+		if (S_ISDIR(de->mode))
+			parent->nlink--;
+		proc_kill_inodes(de);
+		de->nlink = 0;
+		WARN_ON(de->subdir);
+		if (!atomic_read(&de->count))
+			free_proc_entry(de);
+		else {
+			de->deleted = 1;
+			printk("remove_proc_entry: %s/%s busy, count=%d\n",
+				parent->name, de->name, atomic_read(&de->count));
+		}
+		break;
+	}
+out:
+	return;
 }

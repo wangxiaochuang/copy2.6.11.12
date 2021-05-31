@@ -57,6 +57,39 @@ int inode_has_buffers(struct inode *inode)
 	return !list_empty(&inode->i_data.private_list);
 }
 
+int __set_page_dirty_buffers(struct page *page)
+{
+	struct address_space * const mapping = page->mapping;
+
+	spin_lock(&mapping->private_lock);
+	if (page_has_buffers(page)) {
+		struct buffer_head *head = page_buffers(page);
+		struct buffer_head *bh = head;
+
+		do {
+			set_buffer_dirty(bh);
+			bh = bh->b_this_page;
+		} while (bh != head);
+	}
+	spin_unlock(&mapping->private_lock);
+
+	if (!TestSetPageDirty(page)) {
+		spin_lock_irq(&mapping->tree_lock);
+		if (page->mapping) {	/* Race with truncate? */
+			if (!mapping->backing_dev_info->memory_backed)
+				inc_page_state(nr_dirty);
+			radix_tree_tag_set(&mapping->page_tree,
+						page_index(page),
+						PAGECACHE_TAG_DIRTY);
+		}
+		spin_unlock_irq(&mapping->tree_lock);
+		__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
+	}
+	
+	return 0;
+}
+EXPORT_SYMBOL(__set_page_dirty_buffers);
+
 void invalidate_inode_buffers(struct inode *inode)
 {
 	panic("in invalidate_inode_buffers function");

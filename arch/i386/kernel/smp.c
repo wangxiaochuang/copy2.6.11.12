@@ -181,6 +181,28 @@ void flush_tlb_mm (struct mm_struct * mm)
 	preempt_enable();
 }
 
+void flush_tlb_page(struct vm_area_struct * vma, unsigned long va)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	cpumask_t cpu_mask;
+
+	preempt_disable();
+	cpu_mask = mm->cpu_vm_mask;
+	cpu_clear(smp_processor_id(), cpu_mask);
+
+	if (current->active_mm == mm) {
+		if(current->mm)
+			__flush_tlb_one(va);
+		 else
+		 	leave_mm(smp_processor_id());
+	}
+
+	if (!cpus_empty(cpu_mask))
+		flush_tlb_others(cpu_mask, mm, va);
+
+	preempt_enable();
+}
+
 static void do_flush_tlb_all(void* info) {
 	unsigned long cpu = smp_processor_id();
 

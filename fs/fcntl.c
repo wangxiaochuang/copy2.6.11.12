@@ -14,6 +14,30 @@
 #include <asm/siginfo.h>
 #include <asm/uaccess.h>
 
+static void f_modown(struct file *filp, unsigned long pid,
+                     uid_t uid, uid_t euid, int force)
+{
+	write_lock_irq(&filp->f_owner.lock);
+	if (force || !filp->f_owner.pid) {
+		filp->f_owner.pid = pid;
+		filp->f_owner.uid = uid;
+		filp->f_owner.euid = euid;
+	}
+	write_unlock_irq(&filp->f_owner.lock);
+}
+
+int f_setown(struct file *filp, unsigned long arg, int force)
+{
+	int err;
+	
+	err = security_file_set_fowner(filp);
+	if (err)
+		return err;
+
+	f_modown(filp, arg, current->uid, current->euid, force);
+	return 0;
+}
+
 void send_sigio(struct fown_struct *fown, int fd, int band)
 {
     panic("in send_sigio function");

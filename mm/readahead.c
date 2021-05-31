@@ -17,3 +17,10 @@ struct backing_dev_info default_backing_dev_info = {
 	.unplug_io_fn	= default_unplug_io_fn,
 };
 EXPORT_SYMBOL_GPL(default_backing_dev_info);
+
+void
+file_ra_state_init(struct file_ra_state *ra, struct address_space *mapping)
+{
+	ra->ra_pages = mapping->backing_dev_info->ra_pages;
+	ra->prev_page = -1;
+}

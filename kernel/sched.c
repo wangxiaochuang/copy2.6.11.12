@@ -919,6 +919,28 @@ void fastcall wake_up_new_task(task_t * p, unsigned long clone_flags)
 	task_rq_unlock(this_rq, &flags);
 }
 
+void fastcall sched_exit(task_t * p)
+{
+	unsigned long flags;
+	runqueue_t *rq;
+
+	/*
+	 * If the child was a (relative-) CPU hog then decrease
+	 * the sleep_avg of the parent as well.
+	 */
+	rq = task_rq_lock(p->parent, &flags);
+	if (p->first_time_slice) {
+		p->parent->time_slice += p->time_slice;
+		if (unlikely(p->parent->time_slice > task_timeslice(p)))
+			p->parent->time_slice = task_timeslice(p);
+	}
+	if (p->sleep_avg < p->parent->sleep_avg)
+		p->parent->sleep_avg = p->parent->sleep_avg /
+		(EXIT_WEIGHT + 1) * EXIT_WEIGHT + p->sleep_avg /
+		(EXIT_WEIGHT + 1);
+	task_rq_unlock(rq, &flags);
+}
+
 static void finish_task_switch(task_t *prev)
 	__releases(rq->lock)
 {
@@ -1970,6 +1992,23 @@ void fastcall __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
 {
 	__wake_up_common(q, mode, 1, 0, NULL);
 }
+
+void fastcall __wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
+{
+	unsigned long flags;
+	int sync = 1;
+
+	if (unlikely(!q))
+		return;
+
+	if (unlikely(!nr_exclusive))
+		sync = 0;
+
+	spin_lock_irqsave(&q->lock, flags);
+	__wake_up_common(q, mode, nr_exclusive, sync, NULL);
+	spin_unlock_irqrestore(&q->lock, flags);
+}
+EXPORT_SYMBOL_GPL(__wake_up_sync);	/* For internal use only */
 
 void fastcall complete(struct completion *x)
 {

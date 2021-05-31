@@ -4,7 +4,8 @@
 
 obj-y := key.o \
 	process_keys.o \
-	keyring.o
+	keyring.o \
+	user_defined.o
 # obj-y := \
 # 	key.o \
 # 	keyring.o \

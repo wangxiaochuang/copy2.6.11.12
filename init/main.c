@@ -372,7 +372,17 @@ asmlinkage void __init start_kernel(void) {
 
 struct task_struct *child_reaper = &init_task;
 
+static void __init do_basic_setup(void)
+{
+	init_workqueues();
+	usermodehelper_init();
+	key_init();
+	driver_init();
 
+#ifdef CONFIG_SYSCTL
+	sysctl_init();
+#endif
+}
 
 static void do_pre_smp_initcalls(void)
 {
@@ -383,6 +393,10 @@ static void do_pre_smp_initcalls(void)
 	migration_init();
 #endif
 	spawn_ksoftirqd();
+}
+
+static void run_init_process(char *init_filename)
+{
 }
 
 static inline void fixup_cpu_present_map(void)
@@ -417,6 +431,8 @@ static int init(void * unused)
 	 * firmware files.
 	 */
 	populate_rootfs();
+
+	do_basic_setup();
 
 	for(;;)
 		printk("int init\n");

@@ -323,6 +323,42 @@ int context_struct_to_string(struct context *context, char **scontext, u32 *scon
 
 #include "initial_sid_to_string.h"
 
+int security_sid_to_context(u32 sid, char **scontext, u32 *scontext_len)
+{
+	struct context *context;
+	int rc = 0;
+
+	if (!ss_initialized) {
+		if (sid <= SECINITSID_NUM) {
+			char *scontextp;
+
+			*scontext_len = strlen(initial_sid_to_string[sid]) + 1;
+			scontextp = kmalloc(*scontext_len,GFP_ATOMIC);
+			strcpy(scontextp, initial_sid_to_string[sid]);
+			*scontext = scontextp;
+			goto out;
+		}
+		printk(KERN_ERR "security_sid_to_context:  called before initial "
+		       "load_policy on unknown SID %d\n", sid);
+		rc = -EINVAL;
+		goto out;
+	}
+	POLICY_RDLOCK;
+	context = sidtab_search(&sidtab, sid);
+	if (!context) {
+		printk(KERN_ERR "security_sid_to_context:  unrecognized SID "
+		       "%d\n", sid);
+		rc = -EINVAL;
+		goto out_unlock;
+	}
+	rc = context_struct_to_string(context, scontext, scontext_len);
+out_unlock:
+	POLICY_RDUNLOCK;
+out:
+	return rc;
+
+}
+
 int security_context_to_sid(char *scontext, u32 scontext_len, u32 *sid)
 {
 	char *scontext2;

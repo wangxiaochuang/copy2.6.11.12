@@ -276,6 +276,19 @@ del_again:
 	return ret;
 }
 EXPORT_SYMBOL(del_timer_sync);
+
+int del_singleshot_timer_sync(struct timer_list *timer)
+{
+	int ret = del_timer(timer);
+
+	if (!ret) {
+		ret = del_timer_sync(timer);
+		BUG_ON(ret);
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(del_singleshot_timer_sync);
 #endif
 
 static inline void __run_timers(tvec_base_t *base) {
@@ -614,6 +627,51 @@ void do_timer(struct pt_regs *regs)
 	jiffies_64++;
 	update_times();
 }
+
+static void process_timeout(unsigned long __data)
+{
+	wake_up_process((task_t *)__data);
+}
+
+fastcall signed long __sched schedule_timeout(signed long timeout)
+{
+	struct timer_list timer;
+	unsigned long expire;
+
+	switch (timeout)
+	{
+	case MAX_SCHEDULE_TIMEOUT:
+		schedule();
+		goto out;
+	default:
+		if (timeout < 0)
+		{
+			printk(KERN_ERR "schedule_timeout: wrong timeout "
+			       "value %lx from %p\n", timeout,
+			       __builtin_return_address(0));
+			current->state = TASK_RUNNING;
+			goto out;
+		}
+	}
+
+	expire = timeout + jiffies;
+
+	init_timer(&timer);
+	timer.expires = expire;
+	timer.data = (unsigned long) current;
+	timer.function = process_timeout;
+
+	add_timer(&timer);
+	schedule();
+	del_singleshot_timer_sync(&timer);
+
+	timeout = expire - jiffies;
+
+ out:
+	return timeout < 0 ? 0 : timeout;
+}
+
+EXPORT_SYMBOL(schedule_timeout);
 
 static void __devinit init_timers_cpu(int cpu) {
 	int j;

@@ -648,6 +648,14 @@ fastcall unsigned long get_zeroed_page(unsigned int gfp_mask)
 
 EXPORT_SYMBOL(get_zeroed_page);
 
+void __pagevec_free(struct pagevec *pvec)
+{
+	int i = pagevec_count(pvec);
+
+	while (--i >= 0)
+		free_hot_cold_page(pvec->pages[i], pvec->cold);
+}
+
 fastcall void __free_pages(struct page *page, unsigned int order)
 {
 	if (!PageReserved(page) && put_page_testzero(page)) {

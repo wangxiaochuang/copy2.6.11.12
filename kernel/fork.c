@@ -63,9 +63,27 @@ int nr_processes(void)
 static kmem_cache_t *task_struct_cachep;
 #endif
 
+void free_task(struct task_struct *tsk)
+{
+	free_thread_info(tsk->thread_info);
+	free_task_struct(tsk);
+}
+EXPORT_SYMBOL(free_task);
+
 void __put_task_struct(struct task_struct *tsk)
 {
-	panic("in __put_task_struct");
+	WARN_ON(!(tsk->exit_state & (EXIT_DEAD | EXIT_ZOMBIE)));
+	WARN_ON(atomic_read(&tsk->usage));
+	WARN_ON(tsk == current);
+
+	if (unlikely(tsk->audit_context))
+		audit_free(tsk);
+	security_task_free(tsk);
+	free_uid(tsk->user);
+	put_group_info(tsk->group_info);
+
+	if (!profile_handoff_task(tsk))
+		free_task(tsk);
 }
 
 void __init fork_init(unsigned long mempages)
@@ -288,6 +306,27 @@ EXPORT_SYMBOL_GPL(mmput);
 
 void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 {
+	struct completion *vfork_done = tsk->vfork_done;
+
+	/* Get rid of any cached register state */
+	deactivate_mm(tsk, mm);
+
+	/* notify parent sleeping on vfork() */
+	if (vfork_done) {
+		tsk->vfork_done = NULL;
+		complete(vfork_done);
+	}
+	if (tsk->clear_child_tid && atomic_read(&mm->mm_users) > 1) {
+		u32 __user * tidptr = tsk->clear_child_tid;
+		tsk->clear_child_tid = NULL;
+
+		/*
+		 * We don't check the error code - if userspace has
+		 * not set up a proper pointer then tough luck.
+		 */
+		put_user(0, tidptr);
+		sys_futex(tidptr, FUTEX_WAKE, 1, NULL, NULL, 0);
+	}
 }
 
 
@@ -760,7 +799,7 @@ static task_t *copy_process(unsigned long clone_flags,
 	if (clone_flags & (CLONE_PARENT|CLONE_THREAD))
 		p->real_parent = current->real_parent;
 	else
-		p->real_parent = NULL;
+		p->real_parent = current;
 	p->parent = p->real_parent;
 
 	if (clone_flags & CLONE_THREAD) {

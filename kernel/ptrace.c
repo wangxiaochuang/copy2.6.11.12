@@ -22,3 +22,11 @@ void __ptrace_link(task_t *child, task_t *new_parent)
 	child->parent = new_parent;
 	SET_LINKS(child);
 }
+
+void ptrace_untrace(task_t *child)
+{
+}
+
+void __ptrace_unlink(task_t *child)
+{
+}

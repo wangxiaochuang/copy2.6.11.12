@@ -21,6 +21,55 @@
 #include <asm/desc.h>
 #include <asm/kdebug.h>
 
+extern void die(const char *,struct pt_regs *,long);
+
+/*
+ * Unlock any spinlocks which will prevent us from getting the
+ * message out 
+ */
+void bust_spinlocks(int yes)
+{
+	int loglevel_save = console_loglevel;
+
+	if (yes) {
+		oops_in_progress = 1;
+		return;
+	}
+#ifdef CONFIG_VT
+	unblank_screen();
+#endif
+	oops_in_progress = 0;
+	/*
+	 * OK, the message is on the console.  Now we call printk()
+	 * without oops_in_progress set so that printk will give klogd
+	 * a poke.  Hold onto your hats...
+	 */
+	console_loglevel = 15;		/* NMI oopser may have shut the console up */
+	printk(" ");
+	console_loglevel = loglevel_save;
+}
+
+static int __is_prefetch(struct pt_regs *regs, unsigned long addr)
+{
+	panic("in __is_prefetch function");
+	return 0;
+}
+
+static inline int is_prefetch(struct pt_regs *regs, unsigned long addr,
+			      unsigned long error_code)
+{
+	if (unlikely(boot_cpu_data.x86_vendor == X86_VENDOR_AMD &&
+		     boot_cpu_data.x86 >= 6)) {
+		/* Catch an obscure case of prefetch inside an NX page. */
+		if (nx_enabled && (error_code & 16))
+			return 0;
+		return __is_prefetch(regs, addr);
+	}
+	return 0;
+}
+
+fastcall void do_invalid_op(struct pt_regs *, unsigned long);
+
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -46,7 +95,7 @@ fastcall void do_page_fault(struct pt_regs *regs, unsigned long error_code)
     if (notify_die(DIE_PAGE_FAULT, "page fault", regs, error_code, 14,
 					SIGSEGV) == NOTIFY_STOP)
 		return;
-    /* It's safe to allow irq's after cr2 has been saved */
+	// 发生异常前，cpu运行在虚拟模式且本地中断打开了，那么进一步确保中断打开了
 	if (regs->eflags & (X86_EFLAGS_IF|VM_MASK))
 		local_irq_enable();
 
@@ -66,6 +115,8 @@ fastcall void do_page_fault(struct pt_regs *regs, unsigned long error_code)
 
 	mm = tsk->mm;
 
+	// 判断异常发生时，是否内核正在执行一些关键例程或正在运行内核线程(mm字段总为NULL)
+	// in_atomic返回1当：内核正在执行中断处理程序或可延迟函数；内核正在禁止内核抢占执行临界区代码
 	if (in_atomic() || !mm)
 		goto bad_area_nosemaphore;
 
@@ -81,9 +132,13 @@ fastcall void do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		goto bad_area;
 	if (vma->vm_start <= address)
 		goto good_area;
+	// 站到了线性区，但是没有包含这个地址，判断是否是栈
+	// 判断是否是栈，向下扩展
 	if (!(vma->vm_flags & VM_GROWSDOWN))
 		goto bad_area;
+	// 异常发生在用户态时才检测长度。如果是内核态在访问用户态的栈就不检测
 	if (error_code & 4) {
+		// 是否这个地址只比栈top小一点点(类似pusha的几个指令在访问内存后才减esp)
 		if (address + 32 < regs->esp)
 			goto bad_area;
 	}
@@ -114,9 +169,11 @@ good_area:
 survive:
 	switch (handle_mm_fault(mm, vma, address, write)) {
 		case VM_FAULT_MINOR:
+			// 表示没有阻塞当前进程处理了缺页
 			tsk->min_flt++;
 			break;
 		case VM_FAULT_MAJOR:
+			// 缺页导致当前进程睡眠了，很可能是读取磁盘上的数据导致
 			tsk->maj_flt++;
 			break;
 		case VM_FAULT_SIGBUS:

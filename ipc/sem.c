@@ -61,5 +61,12 @@ int copy_semundo(unsigned long clone_flags, struct task_struct *tsk)
 
 void exit_sem(struct task_struct *tsk)
 {
+	struct sem_undo_list *undo_list;
+	struct sem_undo *u, **up;
+
+	undo_list = tsk->sysvsem.undo_list;
+	if (!undo_list)
+		return;
+
 	panic("in exit_sem function");
 }

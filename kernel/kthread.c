@@ -140,3 +140,31 @@ void kthread_bind(struct task_struct *k, unsigned int cpu)
     k->cpus_allowed = cpumask_of_cpu(cpu);
 }
 EXPORT_SYMBOL(kthread_bind);
+
+int kthread_stop(struct task_struct *k)
+{
+    int ret;
+
+	down(&kthread_stop_lock);
+
+    get_task_struct(k);
+
+    /* Must init completion *before* thread sees kthread_stop_info.k */
+	init_completion(&kthread_stop_info.done);
+	wmb();
+
+    /* Now set kthread_should_stop() to true, and wake it up. */
+    kthread_stop_info.k = k;
+    wake_up_process(k);
+    put_task_struct(k);
+
+    /* Once it dies, reset stop ptr, gather result and we're done. */
+	wait_for_completion(&kthread_stop_info.done);
+	kthread_stop_info.k = NULL;
+	ret = kthread_stop_info.err;
+	up(&kthread_stop_lock);
+
+	return ret;
+}
+
+EXPORT_SYMBOL(kthread_stop);

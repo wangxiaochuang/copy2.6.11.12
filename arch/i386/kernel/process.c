@@ -142,6 +142,46 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
     return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
 }
 
+void exit_thread(void)
+{
+	struct task_struct *tsk = current;
+	struct thread_struct *t = &tsk->thread;
+
+	/* The process may have allocated an io port bitmap... nuke it. */
+	if (unlikely(NULL != t->io_bitmap_ptr)) {
+		int cpu = get_cpu();
+		struct tss_struct *tss = &per_cpu(init_tss, cpu);
+
+		kfree(t->io_bitmap_ptr);
+		t->io_bitmap_ptr = NULL;
+		/*
+		 * Careful, clear this in the TSS too:
+		 */
+		memset(tss->io_bitmap, 0xff, tss->io_bitmap_max);
+		t->io_bitmap_max = 0;
+		tss->io_bitmap_owner = NULL;
+		tss->io_bitmap_max = 0;
+		tss->io_bitmap_base = INVALID_IO_BITMAP_OFFSET;
+		put_cpu();
+	}
+}
+
+void release_thread(struct task_struct *dead_task)
+{
+	if (dead_task->mm) {
+		// temporary debugging check
+		if (dead_task->mm->context.size) {
+			printk("WARNING: dead process %8s still has LDT? <%p/%d>\n",
+					dead_task->comm,
+					dead_task->mm->context.ldt,
+					dead_task->mm->context.size);
+			BUG();
+		}
+	}
+
+	release_vm86_irqs(dead_task);
+}
+
 /*
  * This gets called before we allocate a new thread and copy
  * the current task into it.
@@ -306,4 +346,34 @@ struct task_struct fastcall * __switch_to(struct task_struct *prev_p, struct tas
 		handle_io_bitmap(next, tss);
 
 	return prev_p;
+}
+
+asmlinkage int sys_fork(struct pt_regs regs)
+{
+	return do_fork(SIGCHLD, regs.esp, &regs, 0, NULL, NULL);
+}
+
+asmlinkage int sys_execve(struct pt_regs regs)
+{
+	int error;
+	char * filename;
+
+	filename = getname((char __user *) regs.ebx);
+	error = PTR_ERR(filename);
+	if (IS_ERR(filename))
+		goto out;
+	error = do_execve(filename,
+			(char __user * __user *) regs.ecx,
+			(char __user * __user *) regs.edx,
+			&regs);
+	if (error == 0) {
+		task_lock(current);
+		current->ptrace &= ~PT_DTRACE;
+		task_unlock(current);
+		/* Make sure we don't return using sysenter.. */
+		set_thread_flag(TIF_IRET);
+	}
+	putname(filename);
+out:
+	return error;
 }

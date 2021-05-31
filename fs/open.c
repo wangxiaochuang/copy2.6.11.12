@@ -22,7 +22,21 @@
 
 int vfs_statfs(struct super_block *sb, struct kstatfs *buf)
 {
-    return 0;
+    int retval = -ENODEV;
+
+	if (sb) {
+		retval = -ENOSYS;
+		if (sb->s_op->statfs) {
+			memset(buf, 0, sizeof(*buf));
+			retval = security_sb_statfs(sb);
+			if (retval)
+				return retval;
+			retval = sb->s_op->statfs(sb, buf);
+			if (retval == 0 && buf->f_frsize == 0)
+				buf->f_frsize = buf->f_bsize;
+		}
+	}
+	return retval;
 }
 
 EXPORT_SYMBOL(vfs_statfs);
@@ -244,7 +258,62 @@ EXPORT_SYMBOL(filp_open);
 
 struct file *dentry_open(struct dentry *dentry, struct vfsmount *mnt, int flags)
 {
-    return NULL;
+    struct file * f;
+	struct inode *inode;
+	int error;
+
+	error = -ENFILE;
+	f = get_empty_filp();
+	if (!f)
+		goto cleanup_dentry;
+	f->f_flags = flags;
+	f->f_mode = ((flags+1) & O_ACCMODE) | FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE;
+	inode = dentry->d_inode;
+	if (f->f_mode & FMODE_WRITE) {
+		error = get_write_access(inode);
+		if (error)
+			goto cleanup_file;
+	}
+
+	f->f_mapping = inode->i_mapping;
+	f->f_dentry = dentry;
+	f->f_vfsmnt = mnt;
+	f->f_pos = 0;
+	f->f_op = fops_get(inode->i_fop);
+	file_move(f, &inode->i_sb->s_files);
+
+	if (f->f_op && f->f_op->open) {
+		error = f->f_op->open(inode,f);
+		if (error)
+			goto cleanup_all;
+	}
+	f->f_flags &= ~(O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC);
+
+	file_ra_state_init(&f->f_ra, f->f_mapping->host->i_mapping);
+
+	/* NB: we're sure to have correct a_ops only after f_op->open */
+	if (f->f_flags & O_DIRECT) {
+		if (!f->f_mapping->a_ops || !f->f_mapping->a_ops->direct_IO) {
+			fput(f);
+			f = ERR_PTR(-EINVAL);
+		}
+	}
+
+	return f;
+
+cleanup_all:
+	fops_put(f->f_op);
+	if (f->f_mode & FMODE_WRITE)
+		put_write_access(inode);
+	file_kill(f);
+	f->f_dentry = NULL;
+	f->f_vfsmnt = NULL;
+cleanup_file:
+	put_filp(f);
+cleanup_dentry:
+	dput(dentry);
+	mntput(mnt);
+	return ERR_PTR(error);
 }
 
 EXPORT_SYMBOL(dentry_open);

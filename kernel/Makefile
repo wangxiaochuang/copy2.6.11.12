@@ -10,12 +10,12 @@
 # 	    kthread.o wait.o kfifo.o sys_ni.o
 obj-y = sched.o fork.o exec_domain.o panic.o printk.o profile.o \
 		exit.o itimer.o time.o softirq.o resource.o \
-		capability.o ptrace.o timer.o user.o \
-		signal.o sys.o workqueue.o pid.o \
+		sysctl.o capability.o ptrace.o timer.o user.o \
+		signal.o sys.o kmod.o workqueue.o pid.o \
 		rcupdate.o extable.o params.o posix-timers.o \
 		kthread.o wait.o sys_ni.o
 
-# obj-$(CONFIG_FUTEX) += futex.o
+obj-$(CONFIG_FUTEX) += futex.o
 # obj-$(CONFIG_GENERIC_ISA_DMA) += dma.o
 obj-$(CONFIG_SMP) += cpu.o spinlock.o
 # obj-$(CONFIG_UID16) += uid16.o
