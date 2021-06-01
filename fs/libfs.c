@@ -25,6 +25,14 @@ static int simple_delete_dentry(struct dentry *dentry)
 
 struct dentry *simple_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
 {
+	static struct dentry_operations simple_dentry_operations = {
+		.d_delete = simple_delete_dentry,
+	};
+
+	if (dentry->d_name.len > NAME_MAX)
+		return ERR_PTR(-ENAMETOOLONG);
+	dentry->d_op = &simple_dentry_operations;
+	d_add(dentry, NULL);
 	return NULL;
 }
 

@@ -79,6 +79,65 @@ int do_truncate(struct dentry *dentry, loff_t length)
 	return err;
 }
 
+asmlinkage long sys_access(const char __user * filename, int mode)
+{
+	struct nameidata nd;
+	int old_fsuid, old_fsgid;
+	kernel_cap_t old_cap;
+	int res;
+
+	if (mode & ~S_IRWXO)
+		return -EINVAL;
+
+	old_fsuid = current->fsuid;
+	old_fsgid = current->fsgid;
+	old_cap = current->cap_effective;
+
+	current->fsuid = current->uid;
+	current->fsgid = current->gid;
+
+	if (current->uid)
+		cap_clear(current->cap_effective);
+	else
+		current->cap_effective = current->cap_permitted;
+
+	res = __user_walk(filename, LOOKUP_FOLLOW|LOOKUP_ACCESS, &nd);
+	if (!res) {
+		res = permission(nd.dentry->d_inode, mode, &nd);
+		if(!res && (mode & S_IWOTH) && IS_RDONLY(nd.dentry->d_inode)
+		   && !special_file(nd.dentry->d_inode->i_mode))
+			res = -EROFS;
+		path_release(&nd);
+	}
+
+	current->fsuid = old_fsuid;
+	current->fsgid = old_fsgid;
+	current->cap_effective = old_cap;
+
+	return res;
+}
+
+asmlinkage long sys_chdir(const char __user * filename)
+{
+	struct nameidata nd;
+	int error;
+
+	error = __user_walk(filename, LOOKUP_FOLLOW|LOOKUP_DIRECTORY, &nd);
+	if (error)
+		goto out;
+
+	error = permission(nd.dentry->d_inode,MAY_EXEC,&nd);
+	if (error)
+		goto dput_and_out;
+
+	set_fs_pwd(current->fs, nd.mnt, nd.dentry);
+
+dput_and_out:
+	path_release(&nd);
+out:
+	return error;
+}
+
 asmlinkage long sys_fchmod(unsigned int fd, mode_t mode)
 {
     struct inode * inode;

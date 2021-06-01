@@ -533,3 +533,18 @@ static int noinline do_test_wp_bit(void)
 	
 	return flag;
 }
+
+void free_initmem(void)
+{
+    unsigned long addr;
+
+    addr = (unsigned long)(&__init_begin);
+    for (; addr < (unsigned long)(&__init_end); addr += PAGE_SIZE) {
+        ClearPageReserved(virt_to_page(addr));
+        set_page_count(virt_to_page(addr), 1);
+        memset((void *)addr, 0xcc, PAGE_SIZE);
+        free_page(addr);
+        totalram_pages++;
+    }
+    printk (KERN_INFO "Freeing unused kernel memory: %dk freed\n", (__init_end - __init_begin) >> 10);
+}

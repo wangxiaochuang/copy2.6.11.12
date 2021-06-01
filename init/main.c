@@ -109,6 +109,8 @@ extern void softirq_init(void);
 /* Untouched command line (eg. for /proc) saved by arch-specific code. */
 char saved_command_line[COMMAND_LINE_SIZE];
 
+static char *execute_command;
+
 static unsigned int max_cpus = NR_CPUS;
 
 static char * argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
@@ -297,7 +299,7 @@ extern struct kernel_param __start___param[], __stop___param[];
 
 asmlinkage void __init start_kernel(void) {
     char *command_line;
-	strcpy(saved_command_line, "mem=nopentium selinux=1 no_replacement");
+	strcpy(saved_command_line, "mem=nopentium selinux=1 raid=noautodetect no_replacement initcall_debug");
     lock_kernel();
     page_address_init();
     printk("%s", linux_banner);
@@ -370,7 +372,57 @@ asmlinkage void __init start_kernel(void) {
 	rest_init();
 }
 
+
+
+static int __initdata initcall_debug;
+
+static int __init initcall_debug_setup(char *str)
+{
+	initcall_debug = 1;
+	return 1;
+}
+__setup("initcall_debug", initcall_debug_setup);
+
 struct task_struct *child_reaper = &init_task;
+
+extern initcall_t __initcall_start[], __initcall_end[];
+
+static void __init do_initcalls(void)
+{
+	initcall_t *call;
+	int count = preempt_count();
+
+	for (call = __initcall_start; call < __initcall_end; call++) {
+		char *msg;
+
+		if (initcall_debug) {
+			printk(KERN_DEBUG "Calling initcall 0x%p", *call);
+			print_fn_descriptor_symbol(": %s()", (unsigned long) *call);
+			printk("\n");
+		}
+
+		(*call)();
+
+		msg = NULL;
+
+		msg = NULL;
+		if (preempt_count() != count) {
+			msg = "preemption imbalance";
+			preempt_count() = count;
+		}
+		if (irqs_disabled()) {
+			msg = "disabled interrupts";
+			local_irq_enable();
+		}
+		if (msg) {
+			printk("error in initcall at 0x%p: "
+				"returned with %s\n", *call, msg);
+		}
+	}
+
+	/* Make sure there is no pending stuff from the initcall sequence */
+	flush_scheduled_work();
+}
 
 static void __init do_basic_setup(void)
 {
@@ -382,6 +434,11 @@ static void __init do_basic_setup(void)
 #ifdef CONFIG_SYSCTL
 	sysctl_init();
 #endif
+
+	/* Networking initialization needs a process context */ 
+	sock_init();
+
+	do_initcalls();
 }
 
 static void do_pre_smp_initcalls(void)
@@ -433,6 +490,19 @@ static int init(void * unused)
 	populate_rootfs();
 
 	do_basic_setup();
+
+	if (sys_access((const char __user *) "/init", 0) == 0)
+		execute_command = "/init";
+	else
+		prepare_namespace();	
+
+	free_initmem();
+	unlock_kernel();
+	system_state = SYSTEM_RUNNING;
+	numa_default_policy();
+
+	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
+		printk("Warning: unable to open an initial console.\n");
 
 	for(;;)
 		printk("int init\n");

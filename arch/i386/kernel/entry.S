@@ -583,7 +583,7 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_link
-	.long sys_ni_syscall	/* 10 */
+	.long sys_unlink	/* 10 */
 	.long sys_execve
 	.long sys_ni_syscall
 	.long sys_ni_syscall
@@ -606,7 +606,7 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall		/* 30 */
 	.long sys_ni_syscall	/* old stty syscall holder */
 	.long sys_ni_syscall	/* old gtty syscall holder */
-	.long sys_ni_syscall
+	.long sys_access
 	.long sys_ni_syscall
 	.long sys_ni_syscall	/* 35 - old ftime syscall holder */
 	.long sys_ni_syscall

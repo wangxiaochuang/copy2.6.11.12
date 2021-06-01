@@ -13,7 +13,7 @@
 
 obj-y := open.o read_write.o file_table.o buffer.o super.o \
 		block_dev.o char_dev.o exec.o namei.o fcntl.o \
-		fifo.o locks.o dcache.o inode.o \
+		ioctl.o fifo.o locks.o dcache.o inode.o \
 		attr.o bad_inode.o file.o filesystems.o namespace.o aio.o \
 		seq_file.o libfs.o fs-writeback.o mpage.o
 

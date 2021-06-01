@@ -173,6 +173,12 @@ void path_release(struct nameidata *nd)
 	mntput(nd->mnt);
 }
 
+void path_release_on_umount(struct nameidata *nd)
+{
+	dput(nd->dentry);
+	_mntput(nd->mnt);
+}
+
 /*
  * Internal lookup() using the new generic dcache.
  * SMP-safe
@@ -763,6 +769,32 @@ static inline int check_sticky(struct inode *dir, struct inode *inode)
 
 static inline int may_delete(struct inode *dir,struct dentry *victim,int isdir)
 {
+	int error;
+
+	if (!victim->d_inode)
+		return -ENOENT;
+
+	BUG_ON(victim->d_parent->d_inode != dir);
+
+	error = permission(dir, MAY_WRITE | MAY_EXEC, NULL);
+	if (error)
+		return error;
+	if (IS_APPEND(dir))
+		return -EPERM;
+	if (check_sticky(dir, victim->d_inode)||IS_APPEND(victim->d_inode)||
+	    IS_IMMUTABLE(victim->d_inode))
+		return -EPERM;
+	if (isdir) {
+		if (!S_ISDIR(victim->d_inode->i_mode))
+			return -ENOTDIR;
+		if (IS_ROOT(victim))
+			return -EBUSY;
+	} else if (S_ISDIR(victim->d_inode->i_mode))
+		return -EISDIR;
+	if (IS_DEADDIR(dir))
+		return -ENOENT;
+	if (victim->d_flags & DCACHE_NFSFS_RENAMED)
+		return -EBUSY;
 	return 0;
 }
 
@@ -1203,6 +1235,158 @@ int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 		security_inode_post_mkdir(dir,dentry, mode);
 	}
 	return error;
+}
+
+int vfs_rmdir(struct inode *dir, struct dentry *dentry)
+{
+	int error = may_delete(dir, dentry, 1);
+
+	if (error)
+		return error;
+
+	if (!dir->i_op || !dir->i_op->rmdir)
+		return -EPERM;
+
+	DQUOT_INIT(dir);
+
+	down(&dentry->d_inode->i_sem);
+	dentry_unhash(dentry);
+	if (d_mountpoint(dentry))
+		error = -EBUSY;
+	else {
+		error = security_inode_rmdir(dir, dentry);
+		if (!error) {
+			error = dir->i_op->rmdir(dir, dentry);
+			if (!error)
+				dentry->d_inode->i_flags |= S_DEAD;
+		}
+	}
+	up(&dentry->d_inode->i_sem);
+	if (!error) {
+		inode_dir_notify(dir, DN_DELETE);
+		d_delete(dentry);
+	}
+	dput(dentry);
+
+	return error;
+}
+
+asmlinkage long sys_rmdir(const char __user * pathname)
+{
+	int error = 0;
+	char * name;
+	struct dentry *dentry;
+	struct nameidata nd;
+
+	name = getname(pathname);
+	if(IS_ERR(name))
+		return PTR_ERR(name);
+
+	error = path_lookup(name, LOOKUP_PARENT, &nd);
+	if (error)
+		goto exit;
+
+	switch(nd.last_type) {
+		case LAST_DOTDOT:
+			error = -ENOTEMPTY;
+			goto exit1;
+		case LAST_DOT:
+			error = -EINVAL;
+			goto exit1;
+		case LAST_ROOT:
+			error = -EBUSY;
+			goto exit1;
+	}
+	down(&nd.dentry->d_inode->i_sem);
+	dentry = lookup_hash(&nd.last, nd.dentry);
+	error = PTR_ERR(dentry);
+	if (!IS_ERR(dentry)) {
+		error = vfs_rmdir(nd.dentry->d_inode, dentry);
+		dput(dentry);
+	}
+	up(&nd.dentry->d_inode->i_sem);
+exit1:
+	path_release(&nd);
+exit:
+	putname(name);
+	return error;
+}
+
+int vfs_unlink(struct inode *dir, struct dentry *dentry)
+{
+	int error = may_delete(dir, dentry, 0);
+
+	if (error)
+		return error;
+
+	if (!dir->i_op || !dir->i_op->unlink)
+		return -EPERM;
+
+	DQUOT_INIT(dir);
+
+	down(&dentry->d_inode->i_sem);
+	if (d_mountpoint(dentry))
+		error = -EBUSY;
+	else {
+		error = security_inode_unlink(dir, dentry);
+		if (!error)
+			error = dir->i_op->unlink(dir, dentry);
+	}
+	up(&dentry->d_inode->i_sem);
+
+	/* We don't d_delete() NFS sillyrenamed files--they still exist. */
+	if (!error && !(dentry->d_flags & DCACHE_NFSFS_RENAMED)) {
+		d_delete(dentry);
+		inode_dir_notify(dir, DN_DELETE);
+	}
+	return error;
+}
+
+asmlinkage long sys_unlink(const char __user * pathname)
+{
+	int error = 0;
+	char * name;
+	struct dentry *dentry;
+	struct nameidata nd;
+	struct inode *inode = NULL;
+
+	name = getname(pathname);
+	if(IS_ERR(name))
+		return PTR_ERR(name);
+
+	error = path_lookup(name, LOOKUP_PARENT, &nd);
+	if (error)
+		goto exit;
+	error = -EISDIR;
+	if (nd.last_type != LAST_NORM)
+		goto exit1;
+	down(&nd.dentry->d_inode->i_sem);
+	dentry = lookup_hash(&nd.last, nd.dentry);
+	error = PTR_ERR(dentry);
+	if (!IS_ERR(dentry)) {
+		/* Why not before? Because we want correct error value */
+		if (nd.last.name[nd.last.len])
+			goto slashes;
+		inode = dentry->d_inode;
+		if (inode)
+			atomic_inc(&inode->i_count);
+		error = vfs_unlink(nd.dentry->d_inode, dentry);
+	exit2:
+		dput(dentry);
+	}
+	up(&nd.dentry->d_inode->i_sem);
+	if (inode)
+		iput(inode);	/* truncate the inode here */
+exit1:
+	path_release(&nd);
+exit:
+	putname(name);
+	return error;
+
+slashes:
+	error = !dentry->d_inode ? -ENOENT :
+		S_ISDIR(dentry->d_inode->i_mode) ? -EISDIR : -ENOTDIR;
+	goto exit2;
 }
 
 int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname, int mode)
