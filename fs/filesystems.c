@@ -75,6 +75,22 @@ int unregister_filesystem(struct file_system_type * fs)
 
 EXPORT_SYMBOL(unregister_filesystem);
 
+int get_filesystem_list(char * buf)
+{
+	int len = 0;
+	struct file_system_type * tmp;
+	read_lock(&file_systems_lock);
+	tmp = file_systems;
+	while (tmp && len < PAGE_SIZE - 80) {
+		len += sprintf(buf+len, "%s\t%s\n",
+			(tmp->fs_flags & FS_REQUIRES_DEV) ? "" : "nodev",
+			tmp->name);
+		tmp = tmp->next;
+	}
+	read_unlock(&file_systems_lock);
+	return len;
+}
+
 struct file_system_type *get_fs_type(const char *name)
 {
 	struct file_system_type *fs;

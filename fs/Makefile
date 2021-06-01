@@ -46,7 +46,7 @@ obj-$(CONFIG_QUOTACTL)		+= quota.o
 obj-$(CONFIG_DNOTIFY)		+= dnotify.o
 # 
 obj-$(CONFIG_PROC_FS)		+= proc/
-# obj-y				+= partitions/
+obj-y				+= partitions/
 obj-$(CONFIG_SYSFS)		+= sysfs/
 # obj-y				+= devpts/
 # 

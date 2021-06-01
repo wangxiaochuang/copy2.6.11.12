@@ -666,7 +666,31 @@ int fastcall path_walk(const char * name, struct nameidata *nd)
 
 void set_fs_altroot(void)
 {
-	panic("in set_fs_altroot function");
+	char *emul = __emul_prefix();
+	struct nameidata nd;
+	struct vfsmount *mnt = NULL, *oldmnt;
+	struct dentry *dentry = NULL, *olddentry;
+	int err;
+
+	if (!emul)
+		goto set_it;
+
+	err = path_lookup(emul, LOOKUP_FOLLOW|LOOKUP_DIRECTORY|LOOKUP_NOALT, &nd);
+	if (!err) {
+		mnt = nd.mnt;
+		dentry = nd.dentry;
+	}
+set_it:
+	write_lock(&current->fs->lock);
+	oldmnt = current->fs->altrootmnt;
+	olddentry = current->fs->altroot;
+	current->fs->altrootmnt = mnt;
+	current->fs->altroot = dentry;
+	write_unlock(&current->fs->lock);
+	if (olddentry) {
+		dput(olddentry);
+		mntput(oldmnt);
+	}
 }
 
 int fastcall path_lookup(const char *name, unsigned int flags, struct nameidata *nd)
@@ -1235,6 +1259,23 @@ int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 		security_inode_post_mkdir(dir,dentry, mode);
 	}
 	return error;
+}
+
+void dentry_unhash(struct dentry *dentry)
+{
+	dget(dentry);
+	spin_lock(&dcache_lock);
+	switch (atomic_read(&dentry->d_count)) {
+		default:
+			spin_unlock(&dcache_lock);
+			shrink_dcache_parent(dentry);
+			spin_lock(&dcache_lock);
+			if (atomic_read(&dentry->d_count) != 2)
+				break;
+		case 2:
+			__d_drop(dentry);
+	}
+	spin_unlock(&dcache_lock);
 }
 
 int vfs_rmdir(struct inode *dir, struct dentry *dentry)

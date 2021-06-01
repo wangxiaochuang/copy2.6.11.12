@@ -130,6 +130,30 @@ static struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
 	return list_entry(next, struct vfsmount, mnt_child);
 }
 
+static struct vfsmount *
+clone_mnt(struct vfsmount *old, struct dentry *root)
+{
+	struct super_block *sb = old->mnt_sb;
+	struct vfsmount *mnt = alloc_vfsmnt(old->mnt_devname);
+
+	if (mnt) {
+		mnt->mnt_flags = old->mnt_flags;
+		atomic_inc(&sb->s_active);
+		mnt->mnt_sb = sb;
+		mnt->mnt_root = dget(root);
+		mnt->mnt_mountpoint = mnt->mnt_root;
+		mnt->mnt_parent = mnt;
+		mnt->mnt_namespace = old->mnt_namespace;
+
+		/* stick the duplicate mount on the same expiry list
+		 * as the original if that was on one */
+		spin_lock(&vfsmount_lock);
+		if (!list_empty(&old->mnt_fslink))
+			list_add(&mnt->mnt_fslink, &old->mnt_fslink);
+		spin_unlock(&vfsmount_lock);
+	}
+	return mnt;
+}
 
 void __mntput(struct vfsmount *mnt)
 {
@@ -256,6 +280,22 @@ dput_and_out:
 	path_release_on_umount(&nd);
 out:
 	return retval;
+}
+
+#ifdef __ARCH_WANT_SYS_OLDUMOUNT
+
+asmlinkage long sys_oldumount(char __user * name)
+{
+	return sys_umount(name,0);
+}
+
+#endif
+
+static int mount_is_safe(struct nameidata *nd)
+{
+	if (capable(CAP_SYS_ADMIN))
+		return 0;
+	return -EPERM;
 }
 
 static int

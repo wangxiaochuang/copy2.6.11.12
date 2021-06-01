@@ -88,6 +88,13 @@ unsigned long long simple_strtoull(const char *cp,char **endp,unsigned int base)
 
 EXPORT_SYMBOL(simple_strtoull);
 
+long long simple_strtoll(const char *cp,char **endp,unsigned int base)
+{
+	if(*cp=='-')
+		return -simple_strtoull(cp+1,endp,base);
+	return simple_strtoull(cp,endp,base);
+}
+
 static int skip_atoi(const char **s)
 {
 	int i=0;
@@ -456,6 +463,18 @@ int snprintf(char * buf, size_t size, const char *fmt, ...)
 }
 
 EXPORT_SYMBOL(snprintf);
+
+int scnprintf(char * buf, size_t size, const char *fmt, ...)
+{
+	va_list args;
+	int i;
+
+	va_start(args, fmt);
+	i = vsnprintf(buf, size, fmt, args);
+	va_end(args);
+	return (i >= size) ? (size - 1) : i;
+}
+EXPORT_SYMBOL(scnprintf);
 
 int vsprintf(char *buf, const char *fmt, va_list args)
 {

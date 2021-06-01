@@ -14,9 +14,9 @@
 
 #include "do_mounts.h"
 
-int __initdata rd_doload;	/* 1 = load RAM disk, 0 = don't load */
+extern int get_filesystem_list(char * buf);
 
-int root_mountflags = MS_RDONLY | MS_VERBOSE;
+int __initdata rd_doload;	/* 1 = load RAM disk, 0 = don't load */
 
 int root_mountflags = MS_RDONLY | MS_VERBOSE;
 char * __initdata root_device_name;
