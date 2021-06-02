@@ -235,12 +235,57 @@ struct dentry * d_find_alias(struct inode *inode)
 
 static inline void prune_one_dentry(struct dentry * dentry)
 {
-	panic("in prune_one_dentry function");
+	struct dentry * parent;
+
+	__d_drop(dentry);
+	list_del(&dentry->d_child);
+	dentry_stat.nr_dentry--;	/* For d_free, below */
+	dentry_iput(dentry);
+	parent = dentry->d_parent;
+	d_free(dentry);
+	if (parent != dentry)
+		dput(parent);
+	spin_lock(&dcache_lock);
 }
 
 static void prune_dcache(int count)
 {
-	panic("in prune_dcache function");
+	spin_lock(&dcache_lock);
+	for (; count ; count--) {
+		struct dentry *dentry;
+		struct list_head *tmp;
+
+		cond_resched_lock(&dcache_lock);
+
+		tmp = dentry_unused.prev;
+		if (tmp == &dentry_unused)
+			break;
+		list_del_init(tmp);
+		prefetch(dentry_unused.prev);
+ 		dentry_stat.nr_unused--;
+		dentry = list_entry(tmp, struct dentry, d_lru);
+
+ 		spin_lock(&dentry->d_lock);
+		/*
+		 * We found an inuse dentry which was not removed from
+		 * dentry_unused because of laziness during lookup.  Do not free
+		 * it - just keep it off the dentry_unused list.
+		 */
+ 		if (atomic_read(&dentry->d_count)) {
+ 			spin_unlock(&dentry->d_lock);
+			continue;
+		}
+		/* If the dentry was recently referenced, don't free it. */
+		if (dentry->d_flags & DCACHE_REFERENCED) {
+			dentry->d_flags &= ~DCACHE_REFERENCED;
+ 			list_add(&dentry->d_lru, &dentry_unused);
+ 			dentry_stat.nr_unused++;
+ 			spin_unlock(&dentry->d_lock);
+			continue;
+		}
+		prune_one_dentry(dentry);
+	}
+	spin_unlock(&dcache_lock);
 }
 
 void shrink_dcache_sb(struct super_block * sb)
@@ -628,8 +673,51 @@ void d_rehash(struct dentry * entry)
 	spin_unlock(&dcache_lock);
 }
 
+void d_genocide(struct dentry *root)
+{
+	struct dentry *this_parent = root;
+	struct list_head *next;
+
+	spin_lock(&dcache_lock);
+repeat:
+	next = this_parent->d_subdirs.next;
+resume:
+	while (next != &this_parent->d_subdirs) {
+		struct list_head *tmp = next;
+		struct dentry *dentry = list_entry(tmp, struct dentry, d_child);
+		next = tmp->next;
+		if (d_unhashed(dentry)||!dentry->d_inode)
+			continue;
+		if (!list_empty(&dentry->d_subdirs)) {
+			this_parent = dentry;
+			goto repeat;
+		}
+		atomic_dec(&dentry->d_count);
+	}
+	if (this_parent != root) {
+		next = this_parent->d_child.next; 
+		atomic_dec(&this_parent->d_count);
+		this_parent = this_parent->d_parent;
+		goto resume;
+	}
+	spin_unlock(&dcache_lock);
+}
+
+ino_t find_inode_number(struct dentry *dir, struct qstr *name)
+{
+	panic("in find_inode_number function");
+	return 0;
+}
 
 static __initdata unsigned long dhash_entries;
+static int __init set_dhash_entries(char *str)
+{
+	if (!str)
+		return 0;
+	dhash_entries = simple_strtoul(str, &str, 0);
+	return 1;
+}
+__setup("dhash_entries=", set_dhash_entries);
 
 static void __init dcache_init_early(void) {
     int loop;

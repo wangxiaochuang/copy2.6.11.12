@@ -20,6 +20,11 @@
 #include <linux/cpu.h>
 #include <linux/bitops.h>
 
+static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
+static void invalidate_bh_lrus(void);
+
+#define BH_ENTRY(list) list_entry((list), struct buffer_head, b_assoc_buffers)
+
 int sync_blockdev(struct block_device *bdev)
 {
 	int ret = 0;
@@ -50,6 +55,11 @@ int fsync_super(struct super_block *sb)
 	sync_inodes_sb(sb, 1);
 
 	return sync_blockdev(sb->s_bdev);
+}
+
+static inline void __remove_assoc_queue(struct buffer_head *bh)
+{
+	list_del_init(&bh->b_assoc_buffers);
 }
 
 int inode_has_buffers(struct inode *inode)
@@ -92,7 +102,16 @@ EXPORT_SYMBOL(__set_page_dirty_buffers);
 
 void invalidate_inode_buffers(struct inode *inode)
 {
-	panic("in invalidate_inode_buffers function");
+	if (inode_has_buffers(inode)) {
+		struct address_space *mapping = &inode->i_data;
+		struct list_head *list = &mapping->private_list;
+		struct address_space *buffer_mapping = mapping->assoc_mapping;
+
+		spin_lock(&buffer_mapping->private_lock);
+		while (!list_empty(list))
+			__remove_assoc_queue(BH_ENTRY(list->next));
+		spin_unlock(&buffer_mapping->private_lock);
+	}
 }
 
 int block_sync_page(struct page *page)

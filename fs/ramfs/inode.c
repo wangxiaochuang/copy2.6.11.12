@@ -62,22 +62,53 @@ struct inode *ramfs_get_inode(struct super_block *sb, int mode, dev_t dev)
 static int
 ramfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 {
-    return 0;
+    struct inode * inode = ramfs_get_inode(dir->i_sb, mode, dev);
+	int error = -ENOSPC;
+
+	if (inode) {
+		if (dir->i_mode & S_ISGID) {
+			inode->i_gid = dir->i_gid;
+			if (S_ISDIR(mode))
+				inode->i_mode |= S_ISGID;
+		}
+		d_instantiate(dentry, inode);
+		dget(dentry);	/* Extra count - pin the dentry in core */
+		error = 0;
+	}
+	return error;
 }
 
 static int ramfs_mkdir(struct inode * dir, struct dentry * dentry, int mode)
 {
-    return 0;
+	int retval = ramfs_mknod(dir, dentry, mode | S_IFDIR, 0);
+	if (!retval)
+		dir->i_nlink++;
+	return retval;
 }
 
 static int ramfs_create(struct inode *dir, struct dentry *dentry, int mode, struct nameidata *nd)
 {
-	return 0;
+	return ramfs_mknod(dir, dentry, mode | S_IFREG, 0);
 }
 
 static int ramfs_symlink(struct inode * dir, struct dentry *dentry, const char * symname)
 {
-    return 0;
+    struct inode *inode;
+	int error = -ENOSPC;
+
+	inode = ramfs_get_inode(dir->i_sb, S_IFLNK|S_IRWXUGO, 0);
+	if (inode) {
+		int l = strlen(symname) + 1;
+		error = page_symlink(inode, symname, l);
+		if (!error) {
+			if (dir->i_mode & S_ISGID)
+				inode->i_gid = dir->i_gid;
+			d_instantiate(dentry, inode);
+			dget(dentry);
+		} else
+			iput(inode);
+	}
+	return error;
 }
 
 static struct address_space_operations ramfs_aops = {

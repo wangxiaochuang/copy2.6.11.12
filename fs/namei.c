@@ -1596,24 +1596,130 @@ exit:
 	return error;
 }
 
+int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen, const char *link)
+{
+	int len;
+
+	len = PTR_ERR(link);
+	if (IS_ERR(link))
+		goto out;
+
+	len = strlen(link);
+	if (len > (unsigned) buflen)
+		len = buflen;
+	if (copy_to_user(buffer, link, len))
+		len = -EFAULT;
+out:
+	return len;
+}
+
 int generic_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 {
-    return 0;
+    struct nameidata nd;
+	int res;
+	nd.depth = 0;
+	res = dentry->d_inode->i_op->follow_link(dentry, &nd);
+	if (!res) {
+		res = vfs_readlink(dentry, buffer, buflen, nd_get_link(&nd));
+		if (dentry->d_inode->i_op->put_link)
+			dentry->d_inode->i_op->put_link(dentry, &nd);
+	}
+	return res;
+}
+
+int vfs_follow_link(struct nameidata *nd, const char *link)
+{
+	return __vfs_follow_link(nd, link);
+}
+
+/* get the link contents into pagecache */
+static char *page_getlink(struct dentry * dentry, struct page **ppage)
+{
+	struct page * page;
+	struct address_space *mapping = dentry->d_inode->i_mapping;
+	page = read_cache_page(mapping, 0, (filler_t *)mapping->a_ops->readpage,
+				NULL);
+	if (IS_ERR(page))
+		goto sync_fail;
+	wait_on_page_locked(page);
+	if (!PageUptodate(page))
+		goto async_fail;
+	*ppage = page;
+	return kmap(page);
+
+async_fail:
+	page_cache_release(page);
+	return ERR_PTR(-EIO);
+
+sync_fail:
+	return (char*)page;
+}
+
+int page_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+{
+	struct page *page = NULL;
+	char *s = page_getlink(dentry, &page);
+	int res = vfs_readlink(dentry,buffer,buflen,s);
+	if (page) {
+		kunmap(page);
+		page_cache_release(page);
+	}
+	return res;
 }
 
 int page_follow_link_light(struct dentry *dentry, struct nameidata *nd)
 {
+	struct page *page;
+	nd_set_link(nd, page_getlink(dentry, &page));
 	return 0;
 }
 
 void page_put_link(struct dentry *dentry, struct nameidata *nd)
 {
-    panic("in page_put_link function");
+    if (!IS_ERR(nd_get_link(nd))) {
+		struct page *page;
+		page = find_get_page(dentry->d_inode->i_mapping, 0);
+		if (!page)
+			BUG();
+		kunmap(page);
+		page_cache_release(page);
+		page_cache_release(page);
+	}
 }
 
 int page_symlink(struct inode *inode, const char *symname, int len)
 {
-    return 0;
+    struct address_space *mapping = inode->i_mapping;
+	struct page *page = grab_cache_page(mapping, 0);
+	int err = -ENOMEM;
+	char *kaddr;
+
+	if (!page)
+		goto fail;
+	err = mapping->a_ops->prepare_write(NULL, page, 0, len-1);
+	if (err)
+		goto fail_map;
+	kaddr = kmap_atomic(page, KM_USER0);
+	memcpy(kaddr, symname, len-1);
+	kunmap_atomic(kaddr, KM_USER0);
+	mapping->a_ops->commit_write(NULL, page, 0, len-1);
+
+	if (!PageUptodate(page)) {
+		err = mapping->a_ops->readpage(NULL, page);
+		wait_on_page_locked(page);
+	} else {
+		unlock_page(page);
+	}
+	page_cache_release(page);
+	if (err < 0)
+		goto fail;
+	mark_inode_dirty(inode);
+	return 0;
+fail_map:
+	unlock_page(page);
+	page_cache_release(page);
+fail:
+	return err;
 }
 
 struct inode_operations page_symlink_inode_operations = {

@@ -1,5 +1,22 @@
 #include <linux/highmem.h>
 
+void *kmap(struct page *page)
+{
+	might_sleep();
+	if (!PageHighMem(page))
+		return page_address(page);
+	return kmap_high(page);
+}
+
+void kunmap(struct page *page)
+{
+	if (in_interrupt())
+		BUG();
+	if (!PageHighMem(page))
+		return;
+	kunmap_high(page);
+}
+
 void *kmap_atomic(struct page *page, enum km_type type)
 {
 	enum fixed_addresses idx;
