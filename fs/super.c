@@ -326,6 +326,18 @@ void kill_litter_super(struct super_block *sb)
 
 EXPORT_SYMBOL(kill_litter_super);
 
+static int set_bdev_super(struct super_block *s, void *data)
+{
+	s->s_bdev = data;
+	s->s_dev = s->s_bdev->bd_dev;
+	return 0;
+}
+
+static int test_bdev_super(struct super_block *s, void *data)
+{
+	return (void *)s->s_bdev == data;
+}
+
 static void bdev_uevent(struct block_device *bdev, enum kobject_action action)
 {
 	if (bdev->bd_disk) {
@@ -340,8 +352,50 @@ struct super_block *get_sb_bdev(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data,
 	int (*fill_super)(struct super_block *, void *, int))
 {
-	panic("in get_sb_bdev");
-	return NULL;
+	struct block_device *bdev;
+	struct super_block *s;
+	int error = 0;
+
+	bdev = open_bdev_excl(dev_name, flags, fs_type);
+	if (IS_ERR(bdev))
+		return (struct super_block *)bdev;
+
+	down(&bdev->bd_mount_sem);
+	s = sget(fs_type, test_bdev_super, set_bdev_super, bdev);
+	up(&bdev->bd_mount_sem);
+	if (IS_ERR(s))
+		goto out;
+
+	if (s->s_root) {
+		if ((flags ^ s->s_flags) & MS_RDONLY) {
+			up_write(&s->s_umount);
+			deactivate_super(s);
+			s = ERR_PTR(-EBUSY);
+		}
+		goto out;
+	} else {
+		char b[BDEVNAME_SIZE];
+
+		s->s_flags = flags;
+		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));
+		s->s_old_blocksize = block_size(bdev);
+		sb_set_blocksize(s, s->s_old_blocksize);
+		error = fill_super(s, data, flags & MS_VERBOSE ? 1 : 0);
+		if (error) {
+			up_write(&s->s_umount);
+			deactivate_super(s);
+			s = ERR_PTR(error);
+		} else {
+			s->s_flags |= MS_ACTIVE;
+			bdev_uevent(bdev, KOBJ_MOUNT);
+		}
+	}
+
+	return s;
+
+out:
+	close_bdev_excl(bdev);
+	return s;
 }
 
 EXPORT_SYMBOL(get_sb_bdev);
