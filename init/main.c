@@ -299,7 +299,7 @@ extern struct kernel_param __start___param[], __stop___param[];
 
 asmlinkage void __init start_kernel(void) {
     char *command_line;
-	strcpy(saved_command_line, "mem=nopentium selinux=1 raid=noautodetect root=8:0 no_replacement initcall_debug");
+	strcpy(saved_command_line, "mem=nopentium selinux=1 raid=noautodetect root=/dev/hda1 no_replacement initcall_debug");
     lock_kernel();
     page_address_init();
     printk("%s", linux_banner);
