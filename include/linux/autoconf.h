@@ -1900,7 +1900,8 @@
 /*
  * File systems
  */
-#undef CONFIG_EXT2_FS
+#define CONFIG_EXT2_FS 1
+#undef CONFIG_EXT2_FS_XATTR
 #undef CONFIG_EXT3_FS
 #undef CONFIG_JBD
 #define CONFIG_REISERFS_FS_MODULE 1
@@ -1969,7 +1970,6 @@
 #define CONFIG_HUGETLBFS 1
 #define CONFIG_HUGETLB_PAGE 1
 #define CONFIG_RAMFS 1
-#define CONFIG_EXT2_FS 1
 
 /*
  * Miscellaneous filesystems
