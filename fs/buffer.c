@@ -57,6 +57,12 @@ int fsync_super(struct super_block *sb)
 	return sync_blockdev(sb->s_bdev);
 }
 
+void invalidate_bdev(struct block_device *bdev, int destroy_dirty_buffers)
+{
+	invalidate_bh_lrus();
+	invalidate_inode_pages(bdev->bd_inode->i_mapping);
+}
+
 static inline void __remove_assoc_queue(struct buffer_head *bh)
 {
 	list_del_init(&bh->b_assoc_buffers);
@@ -112,6 +118,16 @@ void invalidate_inode_buffers(struct inode *inode)
 			__remove_assoc_queue(BH_ENTRY(list->next));
 		spin_unlock(&buffer_mapping->private_lock);
 	}
+}
+
+static void invalidate_bh_lru(void *arg)
+{
+	panic("in invalidate_bh_lru");
+}
+
+static void invalidate_bh_lrus(void)
+{
+	on_each_cpu(invalidate_bh_lru, NULL, 1, 1);
 }
 
 int block_sync_page(struct page *page)

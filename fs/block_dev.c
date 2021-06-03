@@ -28,6 +28,42 @@ static inline struct bdev_inode *BDEV_I(struct inode *inode)
 	return container_of(inode, struct bdev_inode, vfs_inode);
 }
 
+inline struct block_device *I_BDEV(struct inode *inode)
+{
+	return &BDEV_I(inode)->bdev;
+}
+
+EXPORT_SYMBOL(I_BDEV);
+
+/* Kill _all_ buffers, dirty or not.. */
+static void kill_bdev(struct block_device *bdev)
+{
+	invalidate_bdev(bdev, 1);
+	truncate_inode_pages(bdev->bd_inode->i_mapping, 0);
+}
+
+int set_blocksize(struct block_device *bdev, int size)
+{
+	/* Size must be a power of two, and between 512 and PAGE_SIZE */
+	if (size > PAGE_SIZE || size < 512 || (size & (size-1)))
+		return -EINVAL;
+
+	/* Size cannot be smaller than the size supported by the device */
+	if (size < bdev_hardsect_size(bdev))
+		return -EINVAL;
+
+	/* Don't change the size if it is same as current */
+	if (bdev->bd_block_size != size) {
+		sync_blockdev(bdev);
+		bdev->bd_block_size = size;
+		bdev->bd_inode->i_blkbits = blksize_bits(size);
+		kill_bdev(bdev);
+	}
+	return 0;
+}
+
+EXPORT_SYMBOL(set_blocksize);
+
 static loff_t block_llseek(struct file *file, loff_t offset, int origin)
 {
 	return 0;
@@ -202,3 +238,10 @@ struct file_operations def_blk_fops = {
 	.writev		= generic_file_write_nolock,
 	.sendfile	= generic_file_sendfile,
 };
+
+void close_bdev_excl(struct block_device *bdev)
+{
+	panic("in close_bdev_excl");
+}
+
+EXPORT_SYMBOL(close_bdev_excl);

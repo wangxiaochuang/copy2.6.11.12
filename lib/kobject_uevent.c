@@ -50,8 +50,71 @@ static int send_uevent(const char *signal, const char *obj,
     panic("in send_uevent function");
     return 0;
 }
+
+static int do_kobject_uevent(struct kobject *kobj, enum kobject_action action, 
+			     struct attribute *attr, int gfp_mask)
+{
+	char *path;
+	char *attrpath;
+	char *signal;
+	int len;
+	int rc = -ENOMEM;
+
+	path = kobject_get_path(kobj, gfp_mask);
+	if (!path)
+		return -ENOMEM;
+
+	signal = action_to_string(action);
+	if (!signal)
+		return -EINVAL;
+
+	if (attr) {
+		len = strlen(path);
+		len += strlen(attr->name) + 2;
+		attrpath = kmalloc(len, gfp_mask);
+		if (!attrpath)
+			goto exit;
+		sprintf(attrpath, "%s/%s", path, attr->name);
+		rc = send_uevent(signal, attrpath, NULL, gfp_mask);
+		kfree(attrpath);
+	} else
+		rc = send_uevent(signal, path, NULL, gfp_mask);
+
+exit:
+	kfree(path);
+	return rc;
+}
+
+int kobject_uevent(struct kobject *kobj, enum kobject_action action,
+		   struct attribute *attr)
+{
+	return do_kobject_uevent(kobj, action, attr, GFP_KERNEL);
+}
+EXPORT_SYMBOL_GPL(kobject_uevent);
+
+int kobject_uevent_atomic(struct kobject *kobj, enum kobject_action action,
+			  struct attribute *attr)
+{
+	return do_kobject_uevent(kobj, action, attr, GFP_ATOMIC);
+}
+EXPORT_SYMBOL_GPL(kobject_uevent_atomic);
+
+static int __init kobject_uevent_init(void)
+{
+	// uevent_sock = netlink_kernel_create(NETLINK_KOBJECT_UEVENT, NULL);
+
+	// if (!uevent_sock) {
+	// 	printk(KERN_ERR
+	// 	       "kobject_uevent: unable to create netlink socket!\n");
+	// 	return -ENODEV;
+	// }
+	return 0;
+}
+
+postcore_initcall(kobject_uevent_init);
+
 #else
-#endif
+#endif /* CONFIG_KOBJECT_UEVENT */
 
 #ifdef CONFIG_HOTPLUG
 

@@ -18,3 +18,17 @@ void truncate_inode_pages(struct address_space *mapping, loff_t lstart)
 
     panic("in truncate_inode_pages function");
 }
+
+unsigned long invalidate_mapping_pages(struct address_space *mapping,
+				pgoff_t start, pgoff_t end)
+{
+	panic("in invalidate_mapping_pages");
+	return 0;
+}
+
+unsigned long invalidate_inode_pages(struct address_space *mapping)
+{
+	return invalidate_mapping_pages(mapping, 0, ~0UL);
+}
+
+EXPORT_SYMBOL(invalidate_inode_pages);

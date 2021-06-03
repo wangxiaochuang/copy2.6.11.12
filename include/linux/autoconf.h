@@ -1969,6 +1969,7 @@
 #define CONFIG_HUGETLBFS 1
 #define CONFIG_HUGETLB_PAGE 1
 #define CONFIG_RAMFS 1
+#define CONFIG_EXT2_FS 1
 
 /*
  * Miscellaneous filesystems

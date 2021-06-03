@@ -326,6 +326,36 @@ void kill_litter_super(struct super_block *sb)
 
 EXPORT_SYMBOL(kill_litter_super);
 
+static void bdev_uevent(struct block_device *bdev, enum kobject_action action)
+{
+	if (bdev->bd_disk) {
+		if (bdev->bd_part)
+			kobject_uevent(&bdev->bd_part->kobj, action, NULL);
+		else
+			kobject_uevent(&bdev->bd_disk->kobj, action, NULL);
+	}
+}
+
+struct super_block *get_sb_bdev(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data,
+	int (*fill_super)(struct super_block *, void *, int))
+{
+	panic("in get_sb_bdev");
+	return NULL;
+}
+
+EXPORT_SYMBOL(get_sb_bdev);
+
+void kill_block_super(struct super_block *sb)
+{
+	struct block_device *bdev = sb->s_bdev;
+
+	bdev_uevent(bdev, KOBJ_UMOUNT);
+	generic_shutdown_super(sb);
+	set_blocksize(bdev, sb->s_old_blocksize);
+	close_bdev_excl(bdev);
+}
+
 struct super_block *get_sb_nodev(struct file_system_type *fs_type,
 	int flags, void *data,
 	int (*fill_super)(struct super_block *, void *, int))
