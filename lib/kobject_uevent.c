@@ -251,4 +251,30 @@ exit:
 
 EXPORT_SYMBOL(kobject_hotplug);
 
+int add_hotplug_env_var(char **envp, int num_envp, int *cur_index,
+			char *buffer, int buffer_size, int *cur_len,
+			const char *format, ...)
+{
+	va_list args;
+
+	if (*cur_index >= num_envp - 1)
+		return -ENOMEM;
+
+	envp[*cur_index] = buffer + *cur_len;
+
+	va_start(args, format);
+	*cur_len += vsnprintf(envp[*cur_index],
+			      max(buffer_size - *cur_len, 0),
+			      format, args) + 1;
+	va_end(args);
+
+	if (*cur_len > buffer_size)
+		return -ENOMEM;
+
+	(*cur_index)++;
+	return 0;
+}
+
+EXPORT_SYMBOL(add_hotplug_env_var);
+
 #endif /* CONFIG_HOTPLUG */

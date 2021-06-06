@@ -17,11 +17,120 @@ static struct subsystem block_subsys;
 
 static DECLARE_MUTEX(block_subsys_sem);
 
+static struct blk_major_name {
+	struct blk_major_name *next;
+	int major;
+	char name[16];
+} *major_names[MAX_PROBE_HASH];
 
+static inline int major_to_index(int major)
+{
+	return major % MAX_PROBE_HASH;
+}
 
+#ifdef CONFIG_PROC_FS
+int get_blkdev_list(char *p)
+{
+	panic("in get_blkdev_list");
+	return 0;
+}
+#endif
 
+int register_blkdev(unsigned int major, const char *name)
+{
+	struct blk_major_name **n, *p;
+	int index, ret = 0;
+
+	down(&block_subsys_sem);
+
+	if (major == 0) {
+		panic("in register_blkdev");
+	}
+
+	p = kmalloc(sizeof(struct blk_major_name), GFP_KERNEL);
+	if (p == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	p->major = major;
+	strlcpy(p->name, name, sizeof(p->name));
+	p->next = NULL;
+	index = major_to_index(major);
+
+	for (n = &major_names[index]; *n; n = &(*n)->next) {
+		if ((*n)->major == major)
+			break;
+	}
+	if (!*n)
+		*n = p;
+	else
+		ret = -EBUSY;
+
+	if (ret < 0) {
+		printk("register_blkdev: cannot get major %d for %s\n",
+		       major, name);
+		kfree(p);
+	}
+
+out:
+	up(&block_subsys_sem);
+	return ret;
+}
+
+EXPORT_SYMBOL(register_blkdev);
+
+int unregister_blkdev(unsigned int major, const char *name)
+{
+	panic("in unregister_blkdev");
+	return 0;
+}
+
+EXPORT_SYMBOL(unregister_blkdev);
 
 static struct kobj_map *bdev_map;
+
+void blk_register_region(dev_t dev, unsigned long range, struct module *module,
+			 struct kobject *(*probe)(dev_t, int *, void *),
+			 int (*lock)(dev_t, void *), void *data)
+{
+	kobj_map(bdev_map, dev, range, module, probe, lock, data);
+}
+
+EXPORT_SYMBOL(blk_register_region);
+
+void blk_unregister_region(dev_t dev, unsigned long range)
+{
+	kobj_unmap(bdev_map, dev, range);
+}
+
+EXPORT_SYMBOL(blk_unregister_region);
+
+static struct kobject *exact_match(dev_t dev, int *part, void *data)
+{
+	struct gendisk *p = data;
+	return &p->kobj;
+}
+
+static int exact_lock(dev_t dev, void *data)
+{
+	struct gendisk *p = data;
+
+	if (!get_disk(p))
+		return -1;
+	return 0;
+}
+
+void add_disk(struct gendisk *disk)
+{
+	disk->flags |= GENHD_FL_UP;
+	blk_register_region(MKDEV(disk->major, disk->first_minor),
+			    disk->minors, NULL, exact_match, exact_lock, disk);
+	register_disk(disk);
+	blk_register_queue(disk);
+}
+
+EXPORT_SYMBOL(add_disk);
 
 #define to_disk(obj) container_of(obj,struct gendisk,kobj)
 
@@ -164,7 +273,34 @@ static int block_hotplug_filter(struct kset *kset, struct kobject *kobj)
 static int block_hotplug(struct kset *kset, struct kobject *kobj, char **envp,
 			 int num_envp, char *buffer, int buffer_size)
 {
-	panic("in block_hotplug");
+	struct device *dev = NULL;
+	struct kobj_type *ktype = get_ktype(kobj);
+	int length = 0;
+	int i = 0;
+
+	if (ktype == &ktype_block) {
+		struct gendisk *disk = container_of(kobj, struct gendisk, kobj);
+		dev = disk->driverfs_dev;
+	} else if (ktype == &ktype_part) {
+		struct gendisk *disk = container_of(kobj->parent, struct gendisk, kobj);
+		dev = disk->driverfs_dev;
+	}
+
+	if (dev) {
+		char *path = kobject_get_path(&dev->kobj, GFP_KERNEL);
+		add_hotplug_env_var(envp, num_envp, &i, buffer, buffer_size,
+				    &length, "PHYSDEVPATH=%s", path);
+		kfree(path);
+		if (dev->bus)
+			add_hotplug_env_var(envp, num_envp, &i,
+					    buffer, buffer_size, &length,
+					    "PHYSDEVBUS=%s", dev->bus->name);
+		if (dev->driver)
+			add_hotplug_env_var(envp, num_envp, &i,
+					    buffer, buffer_size, &length,
+					    "PHYSDEVDRIVER=%s", dev->driver->name);
+		envp[i] = NULL;
+	}
 	return 0;
 }
 
@@ -174,6 +310,94 @@ static struct kset_hotplug_ops block_hotplug_ops = {
 };
 
 static decl_subsys(block, &ktype_block, &block_hotplug_ops);
+
+
+static void *diskstats_start(struct seq_file *part, loff_t *pos)
+{
+	panic("in diskstats_start");
+	return NULL;
+}
+
+static void *diskstats_next(struct seq_file *part, void *v, loff_t *pos)
+{
+	panic("in diskstats_next");
+	return NULL;
+}
+
+static void diskstats_stop(struct seq_file *part, void *v)
+{
+	up(&block_subsys_sem);
+}
+
+static int diskstats_show(struct seq_file *s, void *v)
+{
+	panic("in diskstats_show");
+	return 0;
+}
+
+struct seq_operations diskstats_op = {
+	.start	= diskstats_start,
+	.next	= diskstats_next,
+	.stop	= diskstats_stop,
+	.show	= diskstats_show
+};
+
+struct gendisk *alloc_disk(int minors)
+{
+	struct gendisk *disk = kmalloc(sizeof(struct gendisk), GFP_KERNEL);
+	if (disk) {
+		memset(disk, 0, sizeof(struct gendisk));
+		if (!init_disk_stats(disk)) {
+			kfree(disk);
+			return NULL;
+		}
+		if (minors > 1) {
+			int size = (minors - 1) * sizeof(struct hd_struct *);
+			disk->part = kmalloc(size, GFP_KERNEL);
+			if (!disk->part) {
+				kfree(disk);
+				return NULL;
+			}
+			memset(disk->part, 0, size);
+		}
+		disk->minors = minors;
+		kobj_set_kset_s(disk, block_subsys);
+		kobject_init(&disk->kobj);
+		rand_initialize_disk(disk);
+	}
+	return disk;
+}
+
+EXPORT_SYMBOL(alloc_disk);
+
+struct kobject *get_disk(struct gendisk *disk)
+{
+	struct module *owner;
+	struct kobject *kobj;
+
+	if (!disk->fops)
+		return NULL;
+	owner = disk->fops->owner;
+	if (owner && !try_module_get(owner))
+		return NULL;
+	kobj = kobject_get(&disk->kobj);
+	if (kobj == NULL) {
+		module_put(owner);
+		return NULL;
+	}
+	return kobj;
+
+}
+
+EXPORT_SYMBOL(get_disk);
+
+void put_disk(struct gendisk *disk)
+{
+	if (disk)
+		kobject_put(&disk->kobj);
+}
+
+EXPORT_SYMBOL(put_disk);
 
 int bdev_read_only(struct block_device *bdev)
 {
@@ -186,3 +410,17 @@ int bdev_read_only(struct block_device *bdev)
 }
 
 EXPORT_SYMBOL(bdev_read_only);
+
+
+int invalidate_partition(struct gendisk *disk, int index)
+{
+	int res = 0;
+	struct block_device *bdev = bdget_disk(disk, index);
+	if (bdev) {
+		res = __invalidate_device(bdev, 1);
+		bdput(bdev);
+	}
+	return res;
+}
+
+EXPORT_SYMBOL(invalidate_partition);

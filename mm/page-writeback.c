@@ -18,6 +18,8 @@
 #include <linux/cpu.h>
 #include <linux/syscalls.h>
 
+#define MAX_WRITEBACK_PAGES	1024
+
 /*
  * After a CPU has dirtied this many pages, balance_dirty_pages_ratelimited
  * will look to see if it needs to force writeback or throttling.
@@ -47,10 +49,124 @@ int dirty_writeback_centisecs = 5 * 100;
  */
 int block_dump;
 
-int pdflush_operation(void (*fn)(unsigned long), unsigned long arg0)
+int laptop_mode;
+
+EXPORT_SYMBOL(laptop_mode);
+
+static void background_writeout(unsigned long _min_pages);
+
+struct writeback_state
 {
-	panic("in pdflush_operation function");
-	return 0;
+	unsigned long nr_dirty;
+	unsigned long nr_unstable;
+	unsigned long nr_mapped;
+	unsigned long nr_writeback;
+};
+
+static void get_writeback_state(struct writeback_state *wbs)
+{
+	wbs->nr_dirty = read_page_state(nr_dirty);
+	wbs->nr_unstable = read_page_state(nr_unstable);
+	wbs->nr_mapped = read_page_state(nr_mapped);
+	wbs->nr_writeback = read_page_state(nr_writeback);
+}
+
+static void
+get_dirty_limits(struct writeback_state *wbs, long *pbackground, long *pdirty,
+		struct address_space *mapping)
+{
+	int background_ratio;		/* Percentages */
+	int dirty_ratio;
+	int unmapped_ratio;
+	long background;
+	long dirty;
+	unsigned long available_memory = total_pages;
+	struct task_struct *tsk;
+
+	get_writeback_state(wbs);
+
+#ifdef CONFIG_HIGHMEM
+	/*
+	 * If this mapping can only allocate from low memory,
+	 * we exclude high memory from our count.
+	 */
+	if (mapping && !(mapping_gfp_mask(mapping) & __GFP_HIGHMEM))
+		available_memory -= totalhigh_pages;
+#endif
+
+
+	unmapped_ratio = 100 - (wbs->nr_mapped * 100) / total_pages;
+
+	dirty_ratio = vm_dirty_ratio;
+	if (dirty_ratio > unmapped_ratio / 2)
+		dirty_ratio = unmapped_ratio / 2;
+
+	if (dirty_ratio < 5)
+		dirty_ratio = 5;
+
+	background_ratio = dirty_background_ratio;
+	if (background_ratio >= dirty_ratio)
+		background_ratio = dirty_ratio / 2;
+
+	background = (background_ratio * available_memory) / 100;
+	dirty = (dirty_ratio * available_memory) / 100;
+	tsk = current;
+	if (tsk->flags & PF_LESS_THROTTLE || rt_task(tsk)) {
+		background += background / 4;
+		dirty += dirty / 4;
+	}
+	*pbackground = background;
+	*pdirty = dirty;
+}
+
+void balance_dirty_pages_ratelimited(struct address_space *mapping)
+{
+	panic("in balance_dirty_pages_ratelimited");
+}
+
+static void background_writeout(unsigned long _min_pages)
+{
+	long min_pages = _min_pages;
+	struct writeback_control wbc = {
+		.bdi		= NULL,
+		.sync_mode	= WB_SYNC_NONE,
+		.older_than_this = NULL,
+		.nr_to_write	= 0,
+		.nonblocking	= 1,
+	};
+
+	for ( ; ; ) {
+		struct writeback_state wbs;
+		long background_thresh;
+		long dirty_thresh;
+
+		get_dirty_limits(&wbs, &background_thresh, &dirty_thresh, NULL);
+		if (wbs.nr_dirty + wbs.nr_unstable < background_thresh
+				&& min_pages <= 0)
+			break;
+		wbc.encountered_congestion = 0;
+		wbc.nr_to_write = MAX_WRITEBACK_PAGES;
+		wbc.pages_skipped = 0;
+		writeback_inodes(&wbc);
+		min_pages -= MAX_WRITEBACK_PAGES - wbc.nr_to_write;
+		if (wbc.nr_to_write > 0 || wbc.pages_skipped > 0) {
+			/* Wrote less than expected */
+			blk_congestion_wait(WRITE, HZ/10);
+			if (!wbc.encountered_congestion)
+				break;
+		}
+	}
+}
+
+int wakeup_bdflush(long nr_pages)
+{
+	if (nr_pages == 0) {
+		struct writeback_state wbs;
+
+		get_writeback_state(&wbs);
+		nr_pages = wbs.nr_dirty + wbs.nr_unstable;
+	}
+	return pdflush_operation(background_writeout, nr_pages);
 }
 
 static void wb_timer_fn(unsigned long unused);
@@ -177,6 +293,40 @@ int fastcall set_page_dirty(struct page *page)
 	return 0;
 }
 EXPORT_SYMBOL(set_page_dirty);
+
+int set_page_dirty_lock(struct page *page)
+{
+	int ret;
+
+	lock_page(page);
+	ret = set_page_dirty(page);
+	unlock_page(page);
+	return ret;
+}
+EXPORT_SYMBOL(set_page_dirty_lock);
+
+int test_clear_page_dirty(struct page *page)
+{
+	struct address_space *mapping = page_mapping(page);
+	unsigned long flags;
+
+	if (mapping) {
+		spin_lock_irqsave(&mapping->tree_lock, flags);
+		if (TestClearPageDirty(page)) {
+			radix_tree_tag_clear(&mapping->page_tree,
+						page_index(page),
+						PAGECACHE_TAG_DIRTY);
+			spin_unlock_irqrestore(&mapping->tree_lock, flags);
+			if (!mapping->backing_dev_info->memory_backed)
+				dec_page_state(nr_dirty);
+			return 1;
+		}
+		spin_unlock_irqrestore(&mapping->tree_lock, flags);
+		return 0;
+	}
+	return TestClearPageDirty(page);
+}
+EXPORT_SYMBOL(test_clear_page_dirty);
 
 int clear_page_dirty_for_io(struct page *page)
 {

@@ -34,3 +34,7 @@ usr/initramfs_data.cpio.gz
 usr/initramfs_list
 include/linux/compile.h
 include/asm-i386/asm_offsets.h
+lib/gen_crc32table
+scripts/kconfig/mconf
+scripts/lxdialog/lxdialog
+.config.old

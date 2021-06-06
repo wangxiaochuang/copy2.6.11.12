@@ -68,3 +68,48 @@ int request_resource(struct resource *root, struct resource *new) {
 }
 
 EXPORT_SYMBOL(request_resource);
+
+
+
+
+
+struct resource * __request_region(struct resource *parent, unsigned long start, unsigned long n, const char *name)
+{
+    struct resource *res = kmalloc(sizeof(*res), GFP_KERNEL);
+    if (res) {
+        memset(res, 0, sizeof(*res));
+        res->name = name;
+        res->start = start;
+        res->end = start + n - 1;
+        res->flags = IORESOURCE_BUSY;
+
+        write_lock(&resource_lock);
+
+        for (;;) {
+            struct resource *conflict;
+
+            conflict = __request_resource(parent, res);
+            if (!conflict)
+				break;
+            if (conflict != parent) {
+                parent = conflict;
+                if (!(conflict->flags & IORESOURCE_BUSY))
+					continue;
+            }
+            kfree(res);
+            res = NULL;
+            break;
+        }
+        write_unlock(&resource_lock);
+    }
+    return res;
+}
+
+EXPORT_SYMBOL(__request_region);
+
+void __release_region(struct resource *parent, unsigned long start, unsigned long n)
+{
+    panic("in __release_region");
+}
+
+EXPORT_SYMBOL(__release_region);

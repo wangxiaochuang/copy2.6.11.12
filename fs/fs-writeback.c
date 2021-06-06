@@ -271,6 +271,43 @@ sync_sb_inodes(struct super_block *sb, struct writeback_control *wbc)
 	return;		/* Leave any unwritten inodes on s_io */
 }
 
+void
+writeback_inodes(struct writeback_control *wbc)
+{
+	struct super_block *sb;
+
+	might_sleep();
+	spin_lock(&sb_lock);
+restart:
+	sb = sb_entry(super_blocks.prev);
+	for (; sb != sb_entry(&super_blocks); sb = sb_entry(sb->s_list.prev)) {
+		if (!list_empty(&sb->s_dirty) || !list_empty(&sb->s_io)) {
+			/* we're making our own get_super here */
+			sb->s_count++;
+			spin_unlock(&sb_lock);
+			/*
+			 * If we can't get the readlock, there's no sense in
+			 * waiting around, most of the time the FS is going to
+			 * be unmounted by the time it is released.
+			 */
+			if (down_read_trylock(&sb->s_umount)) {
+				if (sb->s_root) {
+					spin_lock(&inode_lock);
+					sync_sb_inodes(sb, wbc);
+					spin_unlock(&inode_lock);
+				}
+				up_read(&sb->s_umount);
+			}
+			spin_lock(&sb_lock);
+			if (__put_super_and_need_restart(sb))
+				goto restart;
+		}
+		if (wbc->nr_to_write <= 0)
+			break;
+	}
+	spin_unlock(&sb_lock);
+}
+
 void sync_inodes_sb(struct super_block *sb, int wait)
 {
 	struct writeback_control wbc = {

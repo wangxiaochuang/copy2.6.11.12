@@ -85,6 +85,7 @@ struct shrinker *set_shrinker(int seeks, shrinker_t theshrinker)
 int try_to_free_pages(struct zone **zones,
 		unsigned int gfp_mask, unsigned int order)
 {
+	panic("in try_to_free_pages");
     return 0;
 }
 

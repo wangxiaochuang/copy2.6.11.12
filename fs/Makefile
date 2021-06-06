@@ -11,7 +11,7 @@
 # 		attr.o bad_inode.o file.o filesystems.o namespace.o aio.o \
 # 		seq_file.o xattr.o libfs.o fs-writeback.o mpage.o direct-io.o \
 
-obj-y := open.o read_write.o file_table.o buffer.o super.o \
+obj-y := open.o read_write.o file_table.o buffer.o bio.o super.o \
 		block_dev.o char_dev.o exec.o namei.o fcntl.o \
 		ioctl.o fifo.o locks.o dcache.o inode.o \
 		attr.o bad_inode.o file.o filesystems.o namespace.o aio.o \

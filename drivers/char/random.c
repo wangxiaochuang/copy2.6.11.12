@@ -21,9 +21,35 @@
 #include <asm/irq.h>
 #include <asm/io.h>
 
+struct timer_rand_state {
+	cycles_t last_time;
+	long last_delta,last_delta2;
+	unsigned dont_count_entropy:1;
+};
+
+static struct timer_rand_state input_timer_state;
+static struct timer_rand_state extract_timer_state;
+static struct timer_rand_state *irq_timer_state[NR_IRQS];
+
 void add_interrupt_randomness(int irq) {
+    panic("in add_interrupt_randomness");
 }
 
 void rand_initialize_irq(int irq) {
+    panic("in rand_initialize_irq");
+}
 
+void rand_initialize_disk(struct gendisk *disk)
+{
+    struct timer_rand_state *state;
+
+	/*
+	 * If kmalloc returns null, we just won't use that entropy
+	 * source.
+	 */
+	state = kmalloc(sizeof(struct timer_rand_state), GFP_KERNEL);
+	if (state) {
+		memset(state, 0, sizeof(struct timer_rand_state));
+		disk->random = state;
+	}
 }

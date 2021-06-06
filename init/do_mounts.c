@@ -314,7 +314,7 @@ void __init prepare_namespace(void)
 		ssleep(root_delay);
 	}
 
-    md_run_setup();
+    // md_run_setup();
 
 	if (saved_root_name[0]) {
 		root_device_name = saved_root_name;

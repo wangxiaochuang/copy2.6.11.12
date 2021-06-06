@@ -222,3 +222,37 @@ void free_irq(unsigned int irq, void *dev_id)
 }
 
 EXPORT_SYMBOL(free_irq);
+
+
+int request_irq(unsigned int irq,
+		irqreturn_t (*handler)(int, void *, struct pt_regs *),
+		unsigned long irqflags, const char * devname, void *dev_id)
+{
+	struct irqaction * action;
+	int retval;
+
+	if ((irqflags & SA_SHIRQ) && !dev_id)
+		return -EINVAL;
+	if (irq >= NR_IRQS)
+		return -EINVAL;
+	if (!handler)
+		return -EINVAL;
+
+	action = kmalloc(sizeof(struct irqaction), GFP_ATOMIC);
+	if (!action)
+		return -ENOMEM;
+
+	action->handler = handler;
+	action->flags = irqflags;
+	cpus_clear(action->mask);
+	action->name = devname;
+	action->next = NULL;
+	action->dev_id = dev_id;
+
+	retval = setup_irq(irq, action);
+	if (retval)
+		kfree(action);
+	return retval;
+}
+
+EXPORT_SYMBOL(request_irq);

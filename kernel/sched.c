@@ -2259,6 +2259,17 @@ void __sched io_schedule(void)
 
 EXPORT_SYMBOL(io_schedule);
 
+long __sched io_schedule_timeout(long timeout)
+{
+	struct runqueue *rq = &per_cpu(runqueues, _smp_processor_id());
+	long ret;
+
+	atomic_inc(&rq->nr_iowait);
+	ret = schedule_timeout(timeout);
+	atomic_dec(&rq->nr_iowait);
+	return ret;
+}
+
 void __devinit init_idle(task_t *idle, int cpu) {
 	runqueue_t *rq = cpu_rq(cpu);
 	unsigned long flags;

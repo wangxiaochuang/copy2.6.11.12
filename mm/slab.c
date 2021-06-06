@@ -1453,6 +1453,42 @@ void * __kmalloc (size_t size, int flags) {
 
 EXPORT_SYMBOL(__kmalloc);
 
+#ifdef CONFIG_SMP
+void *__alloc_percpu(size_t size, size_t align)
+{
+	int i;
+	struct percpu_data *pdata = kmalloc(sizeof (*pdata), GFP_KERNEL);
+
+	if (!pdata)
+		return NULL;
+
+	for (i = 0; i < NR_CPUS; i++) {
+		if (!cpu_possible(i))
+			continue;
+		pdata->ptrs[i] = kmem_cache_alloc_node(
+				kmem_find_general_cachep(size, GFP_KERNEL),
+				cpu_to_node(i));
+
+		if (!pdata->ptrs[i])
+			goto unwind_oom;
+		memset(pdata->ptrs[i], 0, size);
+	}
+
+	return (void *) (~(unsigned long) pdata);
+
+unwind_oom:
+	while (--i >= 0) {
+		if (!cpu_possible(i))
+			continue;
+		kfree(pdata->ptrs[i]);
+	}
+	kfree(pdata);
+	return NULL;
+}
+
+EXPORT_SYMBOL(__alloc_percpu);
+#endif
+
 /**
  * kmem_cache_free - Deallocate an object
  * @cachep: The cache the allocation was from.

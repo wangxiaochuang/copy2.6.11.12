@@ -79,6 +79,20 @@ int __put_super(struct super_block *sb)
 	return ret;
 }
 
+int __put_super_and_need_restart(struct super_block *sb)
+{
+	/* check for race with generic_shutdown_super() */
+	if (list_empty(&sb->s_list)) {
+		/* super block is removed, need to restart... */
+		__put_super(sb);
+		return 1;
+	}
+	/* can't be the last, since s_list is still in use */
+	sb->s_count--;
+	BUG_ON(sb->s_count == 0);
+	return 0;
+}
+
 static void put_super(struct super_block *sb)
 {
 	spin_lock(&sb_lock);
@@ -221,6 +235,45 @@ void drop_super(struct super_block *sb)
 {
 	up_read(&sb->s_umount);
 	put_super(sb);
+}
+
+
+struct super_block * get_super(struct block_device *bdev)
+{
+	struct list_head *p;
+	if (!bdev)
+		return NULL;
+rescan:
+	spin_lock(&sb_lock);
+	list_for_each(p, &super_blocks) {
+		struct super_block *s = sb_entry(p);
+		if (s->s_bdev == bdev) {
+			s->s_count++;
+			spin_unlock(&sb_lock);
+			down_read(&s->s_umount);
+			if (s->s_root)
+				return s;
+			drop_super(s);
+			goto rescan;
+		}
+	}
+	spin_unlock(&sb_lock);
+	return NULL;
+}
+
+EXPORT_SYMBOL(get_super);
+ 
+struct super_block * user_get_super(dev_t dev)
+{
+	panic("in user_get_super");
+	return NULL;
+}
+
+EXPORT_SYMBOL(user_get_super);
+
+asmlinkage long sys_ustat(unsigned dev, struct ustat __user * ubuf)
+{
+	panic("in sys_ustat");
 }
 
 static void mark_files_ro(struct super_block *sb)

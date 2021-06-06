@@ -10,6 +10,20 @@
 #include <linux/highmem.h>
 #include <asm/tlbflush.h>
 
+static mempool_t *page_pool, *isa_page_pool;
+
+static void *page_pool_alloc(int gfp_mask, void *data)
+{
+	int gfp = gfp_mask | (int) (long) data;
+
+	return alloc_page(gfp);
+}
+
+static void page_pool_free(void *page, void *data)
+{
+	__free_page(page);
+}
+
 #ifdef CONFIG_HIGHMEM
 static int pkmap_count[LAST_PKMAP];
 static unsigned int last_pkmap_nr;
@@ -178,6 +192,161 @@ EXPORT_SYMBOL(kunmap_high);
 // #ifndef HASHED_PAGE_VIRTUAL
 // #define HASHED_PAGE_VIRTUAL 
 // #endif
+
+
+int init_emergency_isa_pool(void)
+{
+	panic("in init_emergency_isa_pool");
+	return 0;
+}
+
+static void copy_to_high_bio_irq(struct bio *to, struct bio *from)
+{
+	panic("in copy_to_high_bio_irq");
+}
+
+static void bounce_end_io(struct bio *bio, mempool_t *pool, int err)
+{
+	panic("in bounce_end_io");
+}
+
+static int bounce_end_io_write(struct bio *bio, unsigned int bytes_done,int err)
+{
+	panic("in bounce_end_io_write");
+	return 0;
+}
+
+static int bounce_end_io_write_isa(struct bio *bio, unsigned int bytes_done, int err)
+{
+	panic("in bounce_end_io_write_isa");
+	return 0;
+}
+
+static void __bounce_end_io_read(struct bio *bio, mempool_t *pool, int err)
+{
+	panic("in __bounce_end_io_read");
+}
+
+static int bounce_end_io_read(struct bio *bio, unsigned int bytes_done, int err)
+{
+	panic("in bounce_end_io_read");
+	return 0;
+}
+
+static int bounce_end_io_read_isa(struct bio *bio, unsigned int bytes_done, int err)
+{
+	panic("in bounce_end_io_read_isa");
+	return 0;
+}
+
+static void __blk_queue_bounce(request_queue_t *q, struct bio **bio_orig,
+			mempool_t *pool)
+{
+	struct page *page;
+	struct bio *bio = NULL;
+	int i, rw = bio_data_dir(*bio_orig);
+	struct bio_vec *to, *from;
+
+	bio_for_each_segment(from, *bio_orig, i) {
+		page = from->bv_page;
+
+		/*
+		 * is destination page below bounce pfn?
+		 */
+		if (page_to_pfn(page) < q->bounce_pfn)
+			continue;
+
+		/*
+		 * irk, bounce it
+		 */
+		if (!bio)
+			bio = bio_alloc(GFP_NOIO, (*bio_orig)->bi_vcnt);
+
+		to = bio->bi_io_vec + i;
+
+		to->bv_page = mempool_alloc(pool, q->bounce_gfp);
+		to->bv_len = from->bv_len;
+		to->bv_offset = from->bv_offset;
+
+		if (rw == WRITE) {
+			char *vto, *vfrom;
+
+			flush_dcache_page(from->bv_page);
+			vto = page_address(to->bv_page) + to->bv_offset;
+			vfrom = kmap(from->bv_page) + from->bv_offset;
+			memcpy(vto, vfrom, to->bv_len);
+			kunmap(from->bv_page);
+		}
+	}
+
+	/*
+	 * no pages bounced
+	 */
+	if (!bio)
+		return;
+
+	/*
+	 * at least one page was bounced, fill in possible non-highmem
+	 * pages
+	 */
+	__bio_for_each_segment(from, *bio_orig, i, 0) {
+		to = bio_iovec_idx(bio, i);
+		if (!to->bv_page) {
+			to->bv_page = from->bv_page;
+			to->bv_len = from->bv_len;
+			to->bv_offset = from->bv_offset;
+		}
+	}
+
+	bio->bi_bdev = (*bio_orig)->bi_bdev;
+	bio->bi_flags |= (1 << BIO_BOUNCED);
+	bio->bi_sector = (*bio_orig)->bi_sector;
+	bio->bi_rw = (*bio_orig)->bi_rw;
+
+	bio->bi_vcnt = (*bio_orig)->bi_vcnt;
+	bio->bi_idx = (*bio_orig)->bi_idx;
+	bio->bi_size = (*bio_orig)->bi_size;
+
+	if (pool == page_pool) {
+		bio->bi_end_io = bounce_end_io_write;
+		if (rw == READ)
+			bio->bi_end_io = bounce_end_io_read;
+	} else {
+		bio->bi_end_io = bounce_end_io_write_isa;
+		if (rw == READ)
+			bio->bi_end_io = bounce_end_io_read_isa;
+	}
+
+	bio->bi_private = *bio_orig;
+	*bio_orig = bio;
+}
+
+void blk_queue_bounce(request_queue_t *q, struct bio **bio_orig)
+{
+	mempool_t *pool;
+
+	/*
+	 * for non-isa bounce case, just check if the bounce pfn is equal
+	 * to or bigger than the highest pfn in the system -- in that case,
+	 * don't waste time iterating over bio segments
+	 */
+	if (!(q->bounce_gfp & GFP_DMA)) {
+		if (q->bounce_pfn >= blk_max_pfn)
+			return;
+		pool = page_pool;
+	} else {
+		BUG_ON(!isa_page_pool);
+		pool = isa_page_pool;
+	}
+
+	/*
+	 * slow path
+	 */
+	__blk_queue_bounce(q, bio_orig, pool);
+}
+
+EXPORT_SYMBOL(blk_queue_bounce);
+
 #if defined(HASHED_PAGE_VIRTUAL)
 #define PA_HASH_ORDER	7
 

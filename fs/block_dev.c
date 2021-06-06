@@ -35,6 +35,19 @@ inline struct block_device *I_BDEV(struct inode *inode)
 
 EXPORT_SYMBOL(I_BDEV);
 
+static sector_t max_block(struct block_device *bdev)
+{
+	sector_t retval = ~((sector_t)0);
+	loff_t sz = i_size_read(bdev->bd_inode);
+
+	if (sz) {
+		unsigned int size = block_size(bdev);
+		unsigned int sizebits = blksize_bits(size);
+		retval = (sz >> sizebits);
+	}
+	return retval;
+}
+
 /* Kill _all_ buffers, dirty or not.. */
 static void kill_bdev(struct block_device *bdev)
 {
@@ -83,6 +96,28 @@ EXPORT_SYMBOL(sb_set_blocksize);
 
 
 
+static int
+blkdev_get_block(struct inode *inode, sector_t iblock,
+		struct buffer_head *bh, int create)
+{
+	if (iblock >= max_block(I_BDEV(inode))) {
+		if (create)
+			return -EIO;
+
+		/*
+		 * for reads, we're just trying to fill a partial page.
+		 * return a hole, they will have to call get_block again
+		 * before they can fill it, and they will get -EIO at that
+		 * time
+		 */
+		return 0;
+	}
+	bh->b_bdev = I_BDEV(inode);
+	bh->b_blocknr = iblock;
+	set_buffer_mapped(bh);
+	return 0;
+}
+
 static ssize_t
 blkdev_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 			loff_t offset, unsigned long nr_segs)
@@ -99,8 +134,7 @@ static int blkdev_writepage(struct page *page, struct writeback_control *wbc)
 
 static int blkdev_readpage(struct file * file, struct page * page)
 {
-	panic("in blkdev_readpage");
-	return 0;
+	return block_read_full_page(page, blkdev_get_block);
 }
 
 static int blkdev_prepare_write(struct file *file, struct page *page, unsigned from, unsigned to)
@@ -350,6 +384,22 @@ int bd_claim(struct block_device *bdev, void *holder)
 EXPORT_SYMBOL(bd_claim);
 
 
+void bd_set_size(struct block_device *bdev, loff_t size)
+{
+	unsigned bsize = bdev_hardsect_size(bdev);
+
+	bdev->bd_inode->i_size = size;
+	while (bsize < PAGE_CACHE_SIZE) {
+		if (size & bsize)
+			break;
+		bsize <<= 1;
+	}
+	bdev->bd_block_size = bsize;
+	bdev->bd_inode->i_blkbits = blksize_bits(bsize);
+}
+
+EXPORT_SYMBOL(bd_set_size);
+
 static int do_open(struct block_device *bdev, struct file *file)
 {
 	struct module *owner = NULL;
@@ -366,8 +416,90 @@ static int do_open(struct block_device *bdev, struct file *file)
 		return ret;
 	}
 	owner = disk->fops->owner;
-	panic("in do_open");
+
+	down(&bdev->bd_sem);
+	if (!bdev->bd_openers) {
+		bdev->bd_disk = disk;
+		bdev->bd_contains = bdev;
+		if (!part) {
+			struct backing_dev_info *bdi;
+			if (disk->fops->open) {
+				ret = disk->fops->open(bdev->bd_inode, file);
+				if (ret)
+					goto out_first;
+			}
+			if (!bdev->bd_openers) {
+				bd_set_size(bdev,(loff_t)get_capacity(disk)<<9);
+				bdi = blk_get_backing_dev_info(bdev);
+				if (bdi == NULL)
+					bdi = &default_backing_dev_info;
+				bdev->bd_inode->i_data.backing_dev_info = bdi;
+			}
+			if (bdev->bd_invalidated)
+				rescan_partitions(disk, bdev);
+		} else {
+			struct hd_struct *p;
+			struct block_device *whole;
+			whole = bdget_disk(disk, 0);
+			ret = -ENOMEM;
+			if (!whole)
+				goto out_first;
+			ret = blkdev_get(whole, file->f_mode, file->f_flags);
+			if (ret)
+				goto out_first;
+			bdev->bd_contains = whole;
+			down(&whole->bd_sem);
+			whole->bd_part_count++;
+			p = disk->part[part - 1];
+			bdev->bd_inode->i_data.backing_dev_info =
+			   whole->bd_inode->i_data.backing_dev_info;
+			if (!(disk->flags & GENHD_FL_UP) || !p || !p->nr_sects) {
+				whole->bd_part_count--;
+				up(&whole->bd_sem);
+				ret = -ENXIO;
+				goto out_first;
+			}
+			kobject_get(&p->kobj);
+			bdev->bd_part = p;
+			bd_set_size(bdev, (loff_t) p->nr_sects << 9);
+			up(&whole->bd_sem);
+		}
+	} else {
+		put_disk(disk);
+		module_put(owner);
+		if (bdev->bd_contains == bdev) {
+			if (bdev->bd_disk->fops->open) {
+				ret = bdev->bd_disk->fops->open(bdev->bd_inode, file);
+				if (ret)
+					goto out;
+			}
+			if (bdev->bd_invalidated)
+				rescan_partitions(bdev->bd_disk, bdev);
+		} else {
+			down(&bdev->bd_contains->bd_sem);
+			bdev->bd_contains->bd_part_count++;
+			up(&bdev->bd_contains->bd_sem);
+		}
+	}
+	bdev->bd_openers++;
+	up(&bdev->bd_sem);
+	unlock_kernel();
 	return 0;
+
+out_first:
+	bdev->bd_disk = NULL;
+	bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
+	if (bdev != bdev->bd_contains)
+		blkdev_put(bdev->bd_contains);
+	bdev->bd_contains = NULL;
+	put_disk(disk);
+	module_put(owner);
+out:
+	up(&bdev->bd_sem);
+	unlock_kernel();
+	if (ret)
+		bdput(bdev);
+	return ret;
 }
 
 int blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags)
@@ -392,6 +524,7 @@ static int blkdev_open(struct inode * inode, struct file * filp)
 
 int blkdev_put(struct block_device *bdev)
 {
+	panic("in blkdev_put");
 	return 0;
 }
 

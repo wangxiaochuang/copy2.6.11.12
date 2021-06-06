@@ -283,6 +283,35 @@ int invalidate_inodes(struct super_block * sb)
 	return busy;
 }
 
+EXPORT_SYMBOL(invalidate_inodes);
+ 
+int __invalidate_device(struct block_device *bdev, int do_sync)
+{
+	struct super_block *sb;
+	int res;
+
+	if (do_sync)
+		fsync_bdev(bdev);
+
+	res = 0;
+	sb = get_super(bdev);
+	if (sb) {
+		/*
+		 * no need to lock the super, get_super holds the
+		 * read semaphore so the filesystem cannot go away
+		 * under us (->put_super runs with the write lock
+		 * hold).
+		 */
+		shrink_dcache_sb(sb);
+		res = invalidate_inodes(sb);
+		drop_super(sb);
+	}
+	invalidate_bdev(bdev, 0);
+	return res;
+}
+
+EXPORT_SYMBOL(__invalidate_device);
+
 static void prune_icache(int nr_to_scan)
 {
 	panic("in prune_icache function");
