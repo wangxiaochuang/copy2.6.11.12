@@ -116,6 +116,17 @@ int fsync_bdev(struct block_device *bdev)
 	return sync_blockdev(bdev);
 }
 
+static void do_sync(unsigned long wait)
+{
+	panic("in do_sync");
+}
+
+asmlinkage long sys_sync(void)
+{
+	do_sync(1);
+	return 0;
+}
+
 void invalidate_bdev(struct block_device *bdev, int destroy_dirty_buffers)
 {
 	invalidate_bh_lrus();

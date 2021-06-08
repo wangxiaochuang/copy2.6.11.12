@@ -170,9 +170,12 @@ int wakeup_bdflush(long nr_pages)
 }
 
 static void wb_timer_fn(unsigned long unused);
+static void laptop_timer_fn(unsigned long unused);
 
 static struct timer_list wb_timer =
 			TIMER_INITIALIZER(wb_timer_fn, 0, 0);
+static struct timer_list laptop_mode_wb_timer =
+			TIMER_INITIALIZER(laptop_timer_fn, 0, 0);
 
 static void wb_kupdate(unsigned long arg)
 {
@@ -183,6 +186,26 @@ static void wb_timer_fn(unsigned long unused)
 {
 	if (pdflush_operation(wb_kupdate, 0) < 0)
 		mod_timer(&wb_timer, jiffies + HZ); /* delay 1 second */
+}
+
+static void laptop_flush(unsigned long unused)
+{
+	sys_sync();
+}
+
+static void laptop_timer_fn(unsigned long unused)
+{
+	pdflush_operation(laptop_flush, 0);
+}
+
+void laptop_io_completion(void)
+{
+	mod_timer(&laptop_mode_wb_timer, jiffies + laptop_mode * HZ);
+}
+
+void laptop_sync_completion(void)
+{
+	del_timer(&laptop_mode_wb_timer);
 }
 
 static void set_ratelimit(void)

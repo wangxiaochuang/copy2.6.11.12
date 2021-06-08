@@ -109,16 +109,339 @@ unsigned long read_timer(void)
 }
 #endif
 
+static void __init hd_setup(char *str, int *ints)
+{
+	panic("in hd_setup");
+}
 
+static void dump_status (const char *msg, unsigned int stat)
+{
+	char *name = "hd?";
+	if (CURRENT)
+		name = CURRENT->rq_disk->disk_name;
+#ifdef VERBOSE_ERRORS
+#else
+	printk("%s: %s: status=0x%02x.\n", name, msg, stat & 0xff);
+	if ((stat & ERR_STAT) == 0) {
+		hd_error = 0;
+	} else {
+		hd_error = inb(HD_ERROR);
+		printk("%s: %s: error=0x%02x.\n", name, msg, hd_error & 0xff);
+	}
+#endif
+}
+
+static void check_status(void)
+{
+	int i = inb_p(HD_STATUS);
+
+	if (!OK_STATUS(i)) {
+		dump_status("check_status", i);
+		bad_rw_intr();
+	}
+}
+
+static int controller_busy(void)
+{
+	int retries = 100000;
+	unsigned char status;
+
+	do {
+		status = inb_p(HD_STATUS);
+	} while ((status & BUSY_STAT) && --retries);
+	return status;
+}
+
+static int status_ok(void)
+{
+	unsigned char status = inb_p(HD_STATUS);
+
+	if (status & BUSY_STAT)
+		return 1;	/* Ancient, but does it make sense??? */
+	if (status & WRERR_STAT)
+		return 0;
+	if (!(status & READY_STAT))
+		return 0;
+	if (!(status & SEEK_STAT))
+		return 0;
+	return 1;
+}
+
+static int controller_ready(unsigned int drive, unsigned int head)
+{
+	int retry = 100;
+
+	do {
+		if (controller_busy() & BUSY_STAT)
+			return 0;
+		outb_p(0xA0 | (drive<<4) | head, HD_CURRENT);
+		if (status_ok())
+			return 1;
+	} while (--retry);
+	return 0;
+}
+
+static void hd_out(struct hd_i_struct *disk,
+		   unsigned int nsect,
+		   unsigned int sect,
+		   unsigned int head,
+		   unsigned int cyl,
+		   unsigned int cmd,
+		   void (*intr_addr)(void))
+{
+	unsigned short port;
+
+#if (HD_DELAY > 0)
+	while (read_timer() - last_req < HD_DELAY)
+		/* nothing */;
+#endif
+	if (reset)
+		return;
+	if (!controller_ready(disk->unit, head)) {
+		reset = 1;
+		return;
+	}
+	SET_HANDLER(intr_addr);
+	outb_p(disk->ctl,HD_CMD);
+	port=HD_DATA;
+	outb_p(disk->wpcom>>2,++port);
+	outb_p(nsect,++port);
+	outb_p(sect,++port);
+	outb_p(cyl,++port);
+	outb_p(cyl>>8,++port);
+	outb_p(0xA0|(disk->unit<<4)|head,++port);
+	outb_p(cmd,++port);
+}
+
+static void hd_request (void);
+
+static int drive_busy(void)
+{
+	unsigned int i;
+	unsigned char c;
+
+	for (i = 0; i < 500000 ; i++) {
+		c = inb_p(HD_STATUS);
+		if ((c & (BUSY_STAT | READY_STAT | SEEK_STAT)) == STAT_OK)
+			return 0;
+	}
+	dump_status("reset timed out", c);
+	return 1;
+}
+
+static void reset_controller(void)
+{
+	int	i;
+
+	outb_p(4,HD_CMD);
+	for(i = 0; i < 1000; i++) barrier();
+	outb_p(hd_info[0].ctl & 0x0f,HD_CMD);
+	for(i = 0; i < 1000; i++) barrier();
+	if (drive_busy())
+		printk("hd: controller still busy\n");
+	else if ((hd_error = inb(HD_ERROR)) != 1)
+		printk("hd: controller reset failed: %02x\n",hd_error);
+}
+
+static void reset_hd(void)
+{
+	static int i;
+
+repeat:
+	if (reset) {
+		reset = 0;
+		i = -1;
+		reset_controller();
+	} else {
+		check_status();
+		if (reset)
+			goto repeat;
+	}
+	if (++i < NR_HD) {
+		struct hd_i_struct *disk = &hd_info[i];
+		disk->special_op = disk->recalibrate = 1;
+		hd_out(disk, disk->sect, disk->sect, disk->head-1,
+			disk->cyl, WIN_SPECIFY, &reset_hd);
+		if (reset)
+			goto repeat;
+	} else
+		hd_request();
+}
+
+static void unexpected_hd_interrupt(void)
+{
+	panic("in unexpected_hd_interrupt");
+}
+
+static void bad_rw_intr(void)
+{
+	struct request *req = CURRENT;
+	if (req != NULL) {
+		struct hd_i_struct *disk = req->rq_disk->private_data;
+		if (++req->errors >= MAX_ERRORS || (hd_error & BBD_ERR)) {
+			end_request(req, 0);
+			disk->special_op = disk->recalibrate = 1;
+		} else if (req->errors % RESET_FREQ == 0)
+			reset = 1;
+		else if ((hd_error & TRK0_ERR) || req->errors % RECAL_FREQ == 0)
+			disk->special_op = disk->recalibrate = 1;
+		/* Otherwise just retry */
+	}
+}
+
+static inline int wait_DRQ(void)
+{
+	panic("in wait_DRQ");
+	return 0;
+}
+
+static void read_intr(void)
+{
+	struct request *req;
+	int i, retries = 100000;
+
+	do {
+		i = (unsigned) inb_p(HD_STATUS);
+		if (i & BUSY_STAT)
+			continue;
+		if (!OK_STATUS(i))
+			break;
+		if (i & DRQ_STAT)
+			goto ok_to_read;
+	} while (--retries > 0);
+	dump_status("read_intr", i);
+	bad_rw_intr();
+	hd_request();
+	return;
+ok_to_read:
+	req = CURRENT;
+	insw(HD_DATA,req->buffer,256);
+	req->sector++;
+	req->buffer += 512;
+	req->errors = 0;
+	i = --req->nr_sectors;
+	--req->current_nr_sectors;
+#ifdef DEBUG
+	printk("%s: read: sector %ld, remaining = %ld, buffer=%p\n",
+		req->rq_disk->disk_name, req->sector, req->nr_sectors,
+		req->buffer+512));
+#endif
+	if (req->current_nr_sectors <= 0)
+		end_request(req, 1);
+	if (i > 0) {
+		SET_HANDLER(&read_intr);
+		return;
+	}
+	(void) inb_p(HD_STATUS);
+#if (HD_DELAY > 0)
+	last_req = read_timer();
+#endif
+	if (elv_next_request(QUEUE))
+		hd_request();
+	return;
+}
+
+static void write_intr(void)
+{
+	panic("in write_intr");
+}
+
+static void recal_intr(void)
+{
+	check_status();
+#if (HD_DELAY > 0)
+	last_req = read_timer();
+#endif
+	hd_request();
+}
 
 static void hd_times_out(unsigned long dummy)
 {
 	panic("in hd_times_out");
 }
 
+static int do_special_op(struct hd_i_struct *disk, struct request *req)
+{
+	if (disk->recalibrate) {
+		disk->recalibrate = 0;
+		hd_out(disk,disk->sect,0,0,0,WIN_RESTORE,&recal_intr);
+		return reset;
+	}
+	if (disk->head > 16) {
+		printk ("%s: cannot handle device with more than 16 heads - giving up\n", req->rq_disk->disk_name);
+		end_request(req, 0);
+	}
+	disk->special_op = 0;
+	return 1;
+}
+
 static void hd_request(void)
 {
-	panic("in hd_request");
+	unsigned int block, nsect, sec, track, head, cyl;
+	struct hd_i_struct *disk;
+	struct request *req;
+
+	if (do_hd)
+		return;
+repeat:
+	del_timer(&device_timer);
+	local_irq_enable();
+
+	req = CURRENT;
+	if (!req) {
+		do_hd = NULL;
+		return;
+	}
+
+	if (reset) {
+		local_irq_disable();
+		reset_hd();
+		return;
+	}
+	disk = req->rq_disk->private_data;
+	block = req->sector;
+	nsect = req->nr_sectors;
+	if (block >= get_capacity(req->rq_disk) ||
+	    ((block+nsect) > get_capacity(req->rq_disk))) {
+		printk("%s: bad access: block=%d, count=%d\n",
+			req->rq_disk->disk_name, block, nsect);
+		end_request(req, 0);
+		goto repeat;
+	}
+
+	if (disk->special_op) {
+		if (do_special_op(disk, req))
+			goto repeat;
+		return;
+	}
+	sec   = block % disk->sect + 1;
+	track = block / disk->sect;
+	head  = track % disk->head;
+	cyl   = track / disk->head;
+
+	if (req->flags & REQ_CMD) {
+		switch (rq_data_dir(req)) {
+		case READ:
+			hd_out(disk,nsect,sec,head,cyl,WIN_READ,&read_intr);
+			if (reset)
+				goto repeat;
+			break;
+		case WRITE:
+			hd_out(disk,nsect,sec,head,cyl,WIN_WRITE,&write_intr);
+			if (reset)
+				goto repeat;
+			if (wait_DRQ()) {
+				bad_rw_intr();
+				goto repeat;
+			}
+			outsw(HD_DATA,req->buffer,256);
+			break;
+		default:
+			printk("unknown hd-command\n");
+			end_request(req, 0);
+			break;
+		}
+	}
 }
 
 static void do_hd_request (request_queue_t * q)

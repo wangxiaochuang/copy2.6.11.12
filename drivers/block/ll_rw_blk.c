@@ -163,7 +163,7 @@ void blk_queue_make_request(request_queue_t * q, make_request_fn * mfn)
 
 	INIT_WORK(&q->unplug_work, blk_unplug_work, q);
 
-	q->unplug_timer.function = blk_unplug_timeout;
+	q->unplug_timer.function = blk_unplug_timeout; // ###### import
 	q->unplug_timer.data = (unsigned long)q;
 
 	/*
@@ -867,7 +867,7 @@ request_queue_t *blk_init_queue(request_fn_proc *rfn, spinlock_t *lock)
 	q->front_merge_fn      	= ll_front_merge_fn;
 	q->merge_requests_fn	= ll_merge_requests_fn;
 	q->prep_rq_fn		= NULL;
-	q->unplug_fn		= generic_unplug_device;
+	/* import */ q->unplug_fn		= generic_unplug_device;
 	q->queue_flags		= (1 << QUEUE_FLAG_CLUSTER);
 	q->queue_lock		= lock;
 
@@ -1650,12 +1650,175 @@ void submit_bio(int rw, struct bio *bio)
 
 EXPORT_SYMBOL(submit_bio);
 
+void blk_recalc_rq_segments(struct request *rq)
+{
+	struct bio *bio, *prevbio = NULL;
+	int nr_phys_segs, nr_hw_segs;
+	unsigned int phys_size, hw_size;
+	request_queue_t *q = rq->q;
+
+	if (!rq->bio)
+		return;
+
+	phys_size = hw_size = nr_phys_segs = nr_hw_segs = 0;
+	rq_for_each_bio(bio, rq) {
+		/* Force bio hw/phys segs to be recalculated. */
+		bio->bi_flags &= ~(1 << BIO_SEG_VALID);
+
+		nr_phys_segs += bio_phys_segments(q, bio);
+		nr_hw_segs += bio_hw_segments(q, bio);
+		if (prevbio) {
+			int pseg = phys_size + prevbio->bi_size + bio->bi_size;
+			int hseg = hw_size + prevbio->bi_size + bio->bi_size;
+
+			if (blk_phys_contig_segment(q, prevbio, bio) &&
+			    pseg <= q->max_segment_size) {
+				nr_phys_segs--;
+				phys_size += prevbio->bi_size + bio->bi_size;
+			} else
+				phys_size = 0;
+
+			if (blk_hw_contig_segment(q, prevbio, bio) &&
+			    hseg <= q->max_segment_size) {
+				nr_hw_segs--;
+				hw_size += prevbio->bi_size + bio->bi_size;
+			} else
+				hw_size = 0;
+		}
+		prevbio = bio;
+	}
+
+	rq->nr_phys_segments = nr_phys_segs;
+	rq->nr_hw_segments = nr_hw_segs;
+}
+
+void blk_recalc_rq_sectors(struct request *rq, int nsect)
+{
+	if (blk_fs_request(rq)) {
+		rq->hard_sector += nsect;
+		rq->hard_nr_sectors -= nsect;
+
+		/*
+		 * Move the I/O submission pointers ahead if required.
+		 */
+		if ((rq->nr_sectors >= rq->hard_nr_sectors) &&
+		    (rq->sector <= rq->hard_sector)) {
+			rq->sector = rq->hard_sector;
+			rq->nr_sectors = rq->hard_nr_sectors;
+			rq->hard_cur_sectors = bio_cur_sectors(rq->bio);
+			rq->current_nr_sectors = rq->hard_cur_sectors;
+			rq->buffer = bio_data(rq->bio);
+		}
+
+		/*
+		 * if total number of sectors is less than the first segment
+		 * size, something has gone terribly wrong
+		 */
+		if (rq->nr_sectors < rq->current_nr_sectors) {
+			printk("blk: request botched\n");
+			rq->nr_sectors = rq->current_nr_sectors;
+		}
+	}
+}
 
 static int __end_that_request_first(struct request *req, int uptodate,
 				    int nr_bytes)
 {
-	panic("in __end_that_request_first");
-	return 0;
+	int total_bytes, bio_nbytes, error, next_idx = 0;
+	struct bio *bio;
+
+	/*
+	 * extend uptodate bool to allow < 0 value to be direct io error
+	 */
+	error = 0;
+	if (end_io_error(uptodate))
+		error = !uptodate ? -EIO : uptodate;
+
+	/*
+	 * for a REQ_BLOCK_PC request, we want to carry any eventual
+	 * sense key with us all the way through
+	 */
+	if (!blk_pc_request(req))
+		req->errors = 0;
+
+	if (!uptodate) {
+		if (blk_fs_request(req) && !(req->flags & REQ_QUIET))
+			printk("end_request: I/O error, dev %s, sector %llu\n",
+				req->rq_disk ? req->rq_disk->disk_name : "?",
+				(unsigned long long)req->sector);
+	}
+
+	total_bytes = bio_nbytes = 0;
+	while ((bio = req->bio) != NULL) {
+		int nbytes;
+
+		if (nr_bytes >= bio->bi_size) {
+			req->bio = bio->bi_next;
+			nbytes = bio->bi_size;
+			bio_endio(bio, nbytes, error);
+			next_idx = 0;
+			bio_nbytes = 0;
+		} else {
+			int idx = bio->bi_idx + next_idx;
+
+			if (unlikely(bio->bi_idx >= bio->bi_vcnt)) {
+				blk_dump_rq_flags(req, "__end_that");
+				printk("%s: bio idx %d >= vcnt %d\n",
+						__FUNCTION__,
+						bio->bi_idx, bio->bi_vcnt);
+				break;
+			}
+
+			nbytes = bio_iovec_idx(bio, idx)->bv_len;
+			BIO_BUG_ON(nbytes > bio->bi_size);
+
+			/*
+			 * not a complete bvec done
+			 */
+			if (unlikely(nbytes > nr_bytes)) {
+				bio_nbytes += nr_bytes;
+				total_bytes += nr_bytes;
+				break;
+			}
+
+			/*
+			 * advance to the next vector
+			 */
+			next_idx++;
+			bio_nbytes += nbytes;
+		}
+
+		total_bytes += nbytes;
+		nr_bytes -= nbytes;
+
+		if ((bio = req->bio)) {
+			/*
+			 * end more in this run, or just return 'not-done'
+			 */
+			if (unlikely(nr_bytes <= 0))
+				break;
+		}
+	}
+
+	/*
+	 * completely done
+	 */
+	if (!req->bio)
+		return 0;
+
+	/*
+	 * if the request wasn't completed, update state
+	 */
+	if (bio_nbytes) {
+		bio_endio(bio, bio_nbytes, error);
+		bio->bi_idx += next_idx;
+		bio_iovec(bio)->bv_offset += nr_bytes;
+		bio_iovec(bio)->bv_len -= nr_bytes;
+	}
+
+	blk_recalc_rq_sectors(req, total_bytes >> 9);
+	blk_recalc_rq_segments(req);
+	return 1;
 }
 
 
@@ -1678,15 +1841,45 @@ EXPORT_SYMBOL(end_that_request_chunk);
  */
 void end_that_request_last(struct request *req)
 {
-	panic("in end_that_request_last");
+	struct gendisk *disk = req->rq_disk;
+	struct completion *waiting = req->waiting;
+
+	if (unlikely(laptop_mode) && blk_fs_request(req))
+		laptop_io_completion();
+
+	if (disk && blk_fs_request(req)) {
+		unsigned long duration = jiffies - req->start_time;
+		switch (rq_data_dir(req)) {
+		    case WRITE:
+			__disk_stat_inc(disk, writes);
+			__disk_stat_add(disk, write_ticks, duration);
+			break;
+		    case READ:
+			__disk_stat_inc(disk, reads);
+			__disk_stat_add(disk, read_ticks, duration);
+			break;
+		}
+		disk_round_stats(disk);
+		disk->in_flight--;
+	}
+	__blk_put_request(req->q, req);
+	/* Do this LAST! The structure may be freed immediately afterwards */
+	if (waiting)
+		complete(waiting);
 }
 
 EXPORT_SYMBOL(end_that_request_last);
 
 void end_request(struct request *req, int uptodate)
 {
-	panic("in end_request");
+	if (!end_that_request_first(req, uptodate, req->hard_cur_sectors)) {
+		add_disk_randomness(req->rq_disk);
+		blkdev_dequeue_request(req);
+		end_that_request_last(req);
+	}
 }
+
+EXPORT_SYMBOL(end_request);
 
 void blk_rq_bio_prep(request_queue_t *q, struct request *rq, struct bio *bio)
 {

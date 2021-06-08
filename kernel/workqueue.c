@@ -333,6 +333,11 @@ int fastcall schedule_work(struct work_struct *work)
 	return queue_work(keventd_wq, work);
 }
 
+int fastcall schedule_delayed_work(struct work_struct *work, unsigned long delay)
+{
+	return queue_delayed_work(keventd_wq, work, delay);
+}
+
 int schedule_delayed_work_on(int cpu,
 			struct work_struct *work, unsigned long delay)
 {
