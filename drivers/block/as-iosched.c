@@ -764,7 +764,27 @@ static void as_update_arq(struct as_data *ad, struct as_rq *arq)
 
 static void update_write_batch(struct as_data *ad)
 {
-    panic("in update_write_batch");
+    unsigned long batch = ad->batch_expire[REQ_ASYNC];
+	long write_time;
+
+	write_time = (jiffies - ad->current_batch_expires) + batch;
+	if (write_time < 0)
+		write_time = 0;
+
+	if (write_time > batch && !ad->write_batch_idled) {
+		if (write_time > batch * 3)
+			ad->write_batch_count /= 2;
+		else
+			ad->write_batch_count--;
+	} else if (write_time < batch && ad->current_write_count == 0) {
+		if (batch > write_time * 3)
+			ad->write_batch_count *= 2;
+		else
+			ad->write_batch_count++;
+	}
+
+	if (ad->write_batch_count < 1)
+		ad->write_batch_count = 1;
 }
 
 static void as_completed_request(request_queue_t *q, struct request *rq)
@@ -1535,7 +1555,21 @@ static void as_work_handler(void *data)
 
 static void as_put_request(request_queue_t *q, struct request *rq)
 {
-    panic("in as_put_request");
+    struct as_data *ad = q->elevator->elevator_data;
+	struct as_rq *arq = RQ_DATA(rq);
+
+	if (!arq) {
+		WARN_ON(1);
+		return;
+	}
+
+	if (arq->state != AS_RQ_POSTSCHED && arq->state != AS_RQ_PRESCHED) {
+		printk("arq->state %d\n", arq->state);
+		WARN_ON(1);
+	}
+
+	mempool_free(arq, ad->arq_pool);
+	rq->elevator_private = NULL;
 }
 
 static int as_set_request(request_queue_t *q, struct request *rq, int gfp_mask)

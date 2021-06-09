@@ -648,6 +648,7 @@ static void __init smp_boot_cpus(unsigned int max_cpus)
 		else
 			++kicked;
 	}
+	// @todo
 }
 
 void __init smp_prepare_cpus(unsigned int max_cpus)

@@ -460,8 +460,15 @@ static int hd_ioctl(struct inode * inode, struct file * file,
 
 static irqreturn_t hd_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
-	panic("in hd_interrupt");
-	return 0;
+	void (*handler)(void) = do_hd;
+
+	do_hd = NULL;
+	del_timer(&device_timer);
+	if (!handler)
+		handler = unexpected_hd_interrupt;
+	handler();
+	local_irq_enable();
+	return IRQ_HANDLED;
 }
 
 static struct block_device_operations hd_fops = {

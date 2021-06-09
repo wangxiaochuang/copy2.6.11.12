@@ -73,6 +73,15 @@ __clear_page_buffers(struct page *page)
 	page_cache_release(page);
 }
 
+static void buffer_io_error(struct buffer_head *bh)
+{
+	char b[BDEVNAME_SIZE];
+
+	printk(KERN_ERR "Buffer I/O error on device %s, logical block %Lu\n",
+			bdevname(bh->b_bdev, b),
+			(unsigned long long)bh->b_blocknr);
+}
+
 int sync_blockdev(struct block_device *bdev)
 {
 	int ret = 0;
@@ -150,7 +159,47 @@ static void free_more_memory(void)
 
 static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 {
-	panic("in end_buffer_async_read");
+	static DEFINE_SPINLOCK(page_uptodate_lock);
+	unsigned long flags;
+	struct buffer_head *tmp;
+	struct page *page;
+	int page_uptodate = 1;
+
+	BUG_ON(!buffer_async_read(bh));
+
+	page = bh->b_page;
+	if (uptodate) {
+		set_buffer_uptodate(bh);
+	} else {
+		clear_buffer_uptodate(bh);
+		if (printk_ratelimit())
+			buffer_io_error(bh);
+		SetPageError(page);
+	}
+
+	spin_lock_irqsave(&page_uptodate_lock, flags);
+	clear_buffer_async_read(bh);
+	unlock_buffer(bh);
+	tmp = bh;
+	do {
+		if (!buffer_uptodate(tmp))
+			page_uptodate = 0;
+		if (buffer_async_read(tmp)) {
+			BUG_ON(!buffer_locked(tmp));
+			goto still_busy;
+		}
+		tmp = tmp->b_this_page;
+	} while (tmp != bh);
+	spin_unlock_irqrestore(&page_uptodate_lock, flags);
+
+	if (page_uptodate && !PageError(page))
+		SetPageUptodate(page);
+	unlock_page(page);
+	return;
+
+still_busy:
+	spin_unlock_irqrestore(&page_uptodate_lock, flags);
+	return;
 }
 
 void end_buffer_async_write(struct buffer_head *bh, int uptodate)
@@ -607,7 +656,17 @@ sector_t generic_block_bmap(struct address_space *mapping, sector_t block,
 
 static int end_bio_bh_io_sync(struct bio *bio, unsigned int bytes_done, int err)
 {
-	panic("in end_bio_bh_io_sync");
+	struct buffer_head *bh = bio->bi_private;
+
+	if (bio->bi_size)
+		return 1;
+
+	if (err == -EOPNOTSUPP) {
+		set_bit(BIO_EOPNOTSUPP, &bio->bi_flags);
+		set_bit(BH_Eopnotsupp, &bh->b_state);
+	}
+	bh->b_end_io(bh, test_bit(BIO_UPTODATE, &bio->bi_flags));
+	bio_put(bio);
 	return 0;
 }
 

@@ -40,7 +40,7 @@ void __init intr_init_hook(void)
 	apic_intr_init();
 #endif
 
-	if (!acpi_ioapic)
+	// if (!acpi_ioapic) @todo
 		setup_irq(2, &irq2);
 }
 
