@@ -325,6 +325,25 @@ void sync_inodes_sb(struct super_block *sb, int wait)
 	spin_unlock(&inode_lock);
 }
 
+int sync_inode(struct inode *inode, struct writeback_control *wbc)
+{
+	int ret;
+
+	spin_lock(&inode_lock);
+	ret = __writeback_single_inode(inode, wbc);
+	spin_unlock(&inode_lock);
+	return ret;
+}
+EXPORT_SYMBOL(sync_inode);
+
+int generic_osync_inode(struct inode *inode, struct address_space *mapping, int what)
+{
+	panic("in generic_osync_inode");
+	return 0;
+}
+
+EXPORT_SYMBOL(generic_osync_inode);
+
 int writeback_acquire(struct backing_dev_info *bdi)
 {
 	return !test_and_set_bit(BDI_pdflush, &bdi->state);

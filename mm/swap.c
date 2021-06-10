@@ -260,3 +260,12 @@ void vm_acct_memory(long pages)
 EXPORT_SYMBOL(vm_acct_memory);
 
 #endif /* CONFIG_SMP */
+
+#ifdef CONFIG_SMP
+void percpu_counter_mod(struct percpu_counter *fbc, long amount)
+{
+    panic("in percpu_counter_mod");
+}
+
+EXPORT_SYMBOL(percpu_counter_mod);
+#endif

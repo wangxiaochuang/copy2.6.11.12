@@ -2027,9 +2027,244 @@ void swap_io_context(struct io_context **ioc1, struct io_context **ioc2)
 }
 EXPORT_SYMBOL(swap_io_context);
 
+
+
+
+/*
+ * sysfs parts below
+ */
+struct queue_sysfs_entry {
+	struct attribute attr;
+	ssize_t (*show)(struct request_queue *, char *);
+	ssize_t (*store)(struct request_queue *, const char *, size_t);
+};
+
+static ssize_t
+queue_var_show(unsigned int var, char *page)
+{
+	return sprintf(page, "%d\n", var);
+}
+
+static ssize_t
+queue_var_store(unsigned long *var, const char *page, size_t count)
+{
+	char *p = (char *) page;
+
+	*var = simple_strtoul(p, &p, 10);
+	return count;
+}
+
+static ssize_t queue_requests_show(struct request_queue *q, char *page)
+{
+	return queue_var_show(q->nr_requests, (page));
+}
+
+static ssize_t
+queue_requests_store(struct request_queue *q, const char *page, size_t count)
+{
+	struct request_list *rl = &q->rq;
+
+	int ret = queue_var_store(&q->nr_requests, page, count);
+	if (q->nr_requests < BLKDEV_MIN_RQ)
+		q->nr_requests = BLKDEV_MIN_RQ;
+	blk_queue_congestion_threshold(q);
+
+	if (rl->count[READ] >= queue_congestion_on_threshold(q))
+		set_queue_congested(q, READ);
+	else if (rl->count[READ] < queue_congestion_off_threshold(q))
+		clear_queue_congested(q, READ);
+
+	if (rl->count[WRITE] >= queue_congestion_on_threshold(q))
+		set_queue_congested(q, WRITE);
+	else if (rl->count[WRITE] < queue_congestion_off_threshold(q))
+		clear_queue_congested(q, WRITE);
+
+	if (rl->count[READ] >= q->nr_requests) {
+		blk_set_queue_full(q, READ);
+	} else if (rl->count[READ]+1 <= q->nr_requests) {
+		blk_clear_queue_full(q, READ);
+		wake_up(&rl->wait[READ]);
+	}
+
+	if (rl->count[WRITE] >= q->nr_requests) {
+		blk_set_queue_full(q, WRITE);
+	} else if (rl->count[WRITE]+1 <= q->nr_requests) {
+		blk_clear_queue_full(q, WRITE);
+		wake_up(&rl->wait[WRITE]);
+	}
+	return ret;
+}
+
+static ssize_t queue_ra_show(struct request_queue *q, char *page)
+{
+	int ra_kb = q->backing_dev_info.ra_pages << (PAGE_CACHE_SHIFT - 10);
+
+	return queue_var_show(ra_kb, (page));
+}
+
+static ssize_t
+queue_ra_store(struct request_queue *q, const char *page, size_t count)
+{
+	unsigned long ra_kb;
+	ssize_t ret = queue_var_store(&ra_kb, page, count);
+
+	spin_lock_irq(q->queue_lock);
+	if (ra_kb > (q->max_sectors >> 1))
+		ra_kb = (q->max_sectors >> 1);
+
+	q->backing_dev_info.ra_pages = ra_kb >> (PAGE_CACHE_SHIFT - 10);
+	spin_unlock_irq(q->queue_lock);
+
+	return ret;
+}
+
+static ssize_t queue_max_sectors_show(struct request_queue *q, char *page)
+{
+	int max_sectors_kb = q->max_sectors >> 1;
+
+	return queue_var_show(max_sectors_kb, (page));
+}
+
+static ssize_t
+queue_max_sectors_store(struct request_queue *q, const char *page, size_t count)
+{
+	unsigned long max_sectors_kb,
+			max_hw_sectors_kb = q->max_hw_sectors >> 1,
+			page_kb = 1 << (PAGE_CACHE_SHIFT - 10);
+	ssize_t ret = queue_var_store(&max_sectors_kb, page, count);
+	int ra_kb;
+
+	if (max_sectors_kb > max_hw_sectors_kb || max_sectors_kb < page_kb)
+		return -EINVAL;
+	/*
+	 * Take the queue lock to update the readahead and max_sectors
+	 * values synchronously:
+	 */
+	spin_lock_irq(q->queue_lock);
+	/*
+	 * Trim readahead window as well, if necessary:
+	 */
+	ra_kb = q->backing_dev_info.ra_pages << (PAGE_CACHE_SHIFT - 10);
+	if (ra_kb > max_sectors_kb)
+		q->backing_dev_info.ra_pages =
+				max_sectors_kb >> (PAGE_CACHE_SHIFT - 10);
+
+	q->max_sectors = max_sectors_kb << 1;
+	spin_unlock_irq(q->queue_lock);
+
+	return ret;
+}
+
+static ssize_t queue_max_hw_sectors_show(struct request_queue *q, char *page)
+{
+	int max_hw_sectors_kb = q->max_hw_sectors >> 1;
+
+	return queue_var_show(max_hw_sectors_kb, (page));
+}
+
+static struct queue_sysfs_entry queue_requests_entry = {
+	.attr = {.name = "nr_requests", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_requests_show,
+	.store = queue_requests_store,
+};
+
+static struct queue_sysfs_entry queue_ra_entry = {
+	.attr = {.name = "read_ahead_kb", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_ra_show,
+	.store = queue_ra_store,
+};
+
+static struct queue_sysfs_entry queue_max_sectors_entry = {
+	.attr = {.name = "max_sectors_kb", .mode = S_IRUGO | S_IWUSR },
+	.show = queue_max_sectors_show,
+	.store = queue_max_sectors_store,
+};
+
+static struct queue_sysfs_entry queue_max_hw_sectors_entry = {
+	.attr = {.name = "max_hw_sectors_kb", .mode = S_IRUGO },
+	.show = queue_max_hw_sectors_show,
+};
+
+static struct queue_sysfs_entry queue_iosched_entry = {
+	.attr = {.name = "scheduler", .mode = S_IRUGO | S_IWUSR },
+	.show = elv_iosched_show,
+	.store = elv_iosched_store,
+};
+
+static struct attribute *default_attrs[] = {
+	&queue_requests_entry.attr,
+	&queue_ra_entry.attr,
+	&queue_max_hw_sectors_entry.attr,
+	&queue_max_sectors_entry.attr,
+	&queue_iosched_entry.attr,
+	NULL,
+};
+
+#define to_queue(atr) container_of((atr), struct queue_sysfs_entry, attr)
+
+static ssize_t
+queue_attr_show(struct kobject *kobj, struct attribute *attr, char *page)
+{
+	struct queue_sysfs_entry *entry = to_queue(attr);
+	struct request_queue *q;
+
+	q = container_of(kobj, struct request_queue, kobj);
+	if (!entry->show)
+		return 0;
+
+	return entry->show(q, page);
+}
+
+static ssize_t
+queue_attr_store(struct kobject *kobj, struct attribute *attr,
+		    const char *page, size_t length)
+{
+	struct queue_sysfs_entry *entry = to_queue(attr);
+	struct request_queue *q;
+
+	q = container_of(kobj, struct request_queue, kobj);
+	if (!entry->store)
+		return -EINVAL;
+
+	return entry->store(q, page, length);
+}
+
+static struct sysfs_ops queue_sysfs_ops = {
+	.show	= queue_attr_show,
+	.store	= queue_attr_store,
+};
+
+struct kobj_type queue_ktype = {
+	.sysfs_ops	= &queue_sysfs_ops,
+	.default_attrs	= default_attrs,
+};
+
 int blk_register_queue(struct gendisk *disk)
 {
-	panic("in blk_register_queue");
+	int ret;
+
+	request_queue_t *q = disk->queue;
+
+	if (!q || !q->request_fn)
+		return -ENXIO;
+
+	q->kobj.parent = kobject_get(&disk->kobj);
+	if (!q->kobj.parent)
+		return -EBUSY;
+
+	snprintf(q->kobj.name, KOBJ_NAME_LEN, "%s", "queue");
+	q->kobj.ktype = &queue_ktype;
+
+	ret = kobject_register(&q->kobj);
+	if (ret < 0)
+		return ret;
+
+	ret = elv_register_queue(q);
+	if (ret) {
+		kobject_unregister(&q->kobj);
+		return ret;
+	}
+
 	return 0;
 }
 

@@ -230,7 +230,7 @@ extern struct subsystem block_subsys;
 
 static void part_release(struct kobject *kobj)
 {
-	struct hd_struct * p = container_of(kobj,struct hd_struct,kobj);
+	struct hd_struct * p = container_of(kobj, struct hd_struct, kobj);
 	kfree(p);
 }
 
@@ -258,7 +258,28 @@ void delete_partition(struct gendisk *disk, int part)
 
 void add_partition(struct gendisk *disk, int part, sector_t start, sector_t len)
 {
-	panic("in add_partition");
+	struct hd_struct *p;
+
+	p = kmalloc(sizeof(*p), GFP_KERNEL);
+	if (!p)
+		return;
+
+	memset(p, 0, sizeof(*p));
+	p->start_sect = start;
+	p->nr_sects = len;
+	p->partno = part;
+
+	devfs_mk_bdev(MKDEV(disk->major, disk->first_minor + part),
+			S_IFBLK|S_IRUSR|S_IWUSR,
+			"%s/part%d", disk->devfs_name, part);
+	if (isdigit(disk->kobj.name[strlen(disk->kobj.name)-1]))
+		snprintf(p->kobj.name, KOBJ_NAME_LEN, "%sp%d", disk->kobj.name, part);
+	else
+		snprintf(p->kobj.name, KOBJ_NAME_LEN, "%s%d", disk->kobj.name, part);
+	p->kobj.parent = &disk->kobj;
+	p->kobj.ktype = &ktype_part;
+	kobject_register(&p->kobj);
+	disk->part[part-1] = p;
 }
 
 static void disk_sysfs_symlinks(struct gendisk *disk)

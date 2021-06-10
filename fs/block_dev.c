@@ -94,7 +94,15 @@ int sb_set_blocksize(struct super_block *sb, int size)
 
 EXPORT_SYMBOL(sb_set_blocksize);
 
+int sb_min_blocksize(struct super_block *sb, int size)
+{
+	int minsize = bdev_hardsect_size(sb->s_bdev);
+	if (size < minsize)
+		size = minsize;
+	return sb_set_blocksize(sb, size);
+}
 
+EXPORT_SYMBOL(sb_min_blocksize);
 
 static int
 blkdev_get_block(struct inode *inode, sector_t iblock,
@@ -524,8 +532,45 @@ static int blkdev_open(struct inode * inode, struct file * filp)
 
 int blkdev_put(struct block_device *bdev)
 {
-	panic("in blkdev_put");
-	return 0;
+	int ret = 0;
+	struct inode *bd_inode = bdev->bd_inode;
+	struct gendisk *disk = bdev->bd_disk;
+
+	down(&bdev->bd_sem);
+	lock_kernel();
+	if (!--bdev->bd_openers) {
+		sync_blockdev(bdev);
+		kill_bdev(bdev);
+	}
+	if (bdev->bd_contains == bdev) {
+		if (disk->fops->release)
+			ret = disk->fops->release(bd_inode, NULL);
+	} else {
+		down(&bdev->bd_contains->bd_sem);
+		bdev->bd_contains->bd_part_count--;
+		up(&bdev->bd_contains->bd_sem);
+	}
+	if (!bdev->bd_openers) {
+		struct module *owner = disk->fops->owner;
+
+		put_disk(disk);
+		module_put(owner);
+
+		if (bdev->bd_contains != bdev) {
+			kobject_put(&bdev->bd_part->kobj);
+			bdev->bd_part = NULL;
+		}
+		bdev->bd_disk = NULL;
+		bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
+		if (bdev != bdev->bd_contains) {
+			blkdev_put(bdev->bd_contains);
+		}
+		bdev->bd_contains = NULL;
+	}
+	unlock_kernel();
+	up(&bdev->bd_sem);
+	bdput(bdev);
+	return ret;
 }
 
 EXPORT_SYMBOL(blkdev_put);

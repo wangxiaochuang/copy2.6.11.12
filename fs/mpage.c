@@ -19,6 +19,33 @@ struct bio *mpage_bio_submit(int rw, struct bio *bio)
     return NULL;
 }
 
+
+
+static struct bio *
+do_mpage_readpage(struct bio *bio, struct page *page, unsigned nr_pages,
+			sector_t *last_block_in_bio, get_block_t get_block)
+{
+	panic("in do_mpage_readpage");
+	return NULL;
+}
+
+int
+mpage_readpages(struct address_space *mapping, struct list_head *pages,
+				unsigned nr_pages, get_block_t get_block)
+{
+	panic("in ext2_quota_read");
+	return 0;
+}
+
+int mpage_readpage(struct page *page, get_block_t get_block)
+{
+	panic("in mpage_readpage");
+	return 0;
+}
+
+EXPORT_SYMBOL(mpage_readpage);
+
+
 static struct bio *
 mpage_writepage(struct bio *bio, struct page *page, get_block_t get_block,
 	sector_t *last_block_in_bio, int *ret, struct writeback_control *wbc)

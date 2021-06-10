@@ -30,6 +30,15 @@ static int assign_type(struct file_lock *fl, int type)
 	return 0;
 }
 
+static inline int
+posix_same_owner(struct file_lock *fl1, struct file_lock *fl2)
+{
+	if (fl1->fl_lmops && fl1->fl_lmops->fl_compare_owner)
+		return fl2->fl_lmops == fl1->fl_lmops &&
+			fl1->fl_lmops->fl_compare_owner(fl1, fl2);
+	return fl1->fl_owner == fl2->fl_owner;
+}
+
 static void locks_wake_up_blocks(struct file_lock *blocker)
 {
     panic("in locks_wake_up_blocks function");
@@ -84,7 +93,40 @@ int __break_lease(struct inode *inode, unsigned int mode)
 
 void locks_remove_posix(struct file *filp, fl_owner_t owner)
 {
-    panic("in locks_remove_posix function");
+    struct file_lock lock, **before;
+
+	before = &filp->f_dentry->d_inode->i_flock;
+	if (*before == NULL)
+		return;
+
+	lock.fl_type = F_UNLCK;
+	lock.fl_flags = FL_POSIX;
+	lock.fl_start = 0;
+	lock.fl_end = OFFSET_MAX;
+	lock.fl_owner = owner;
+	lock.fl_pid = current->tgid;
+	lock.fl_file = filp;
+	lock.fl_ops = NULL;
+	lock.fl_lmops = NULL;
+
+	if (filp->f_op && filp->f_op->lock != NULL) {
+		filp->f_op->lock(filp, F_SETLK, &lock);
+		goto out;
+	}
+
+	lock_kernel();
+	while (*before != NULL) {
+		struct file_lock *fl = *before;
+		if (IS_POSIX(fl) && posix_same_owner(fl, &lock)) {
+			locks_delete_lock(before);
+			continue;
+		}
+		before = &fl->fl_next;
+	}
+	unlock_kernel();
+out:
+	if (lock.fl_ops && lock.fl_ops->fl_release_private)
+		lock.fl_ops->fl_release_private(&lock);
 }
 
 EXPORT_SYMBOL(locks_remove_posix);

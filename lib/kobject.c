@@ -136,7 +136,18 @@ int kobject_add(struct kobject * kobj)
 
 int kobject_register(struct kobject * kobj)
 {
-	return 0;
+	int error = 0;
+	if (kobj) {
+		kobject_init(kobj);
+		error = kobject_add(kobj);
+		if (error) {
+			printk("kobject_register failed for %s (%d)\n",
+			       kobject_name(kobj),error);
+			dump_stack();
+		}
+	} else
+		error = -EINVAL;
+	return error;
 }
 
 int kobject_set_name(struct kobject * kobj, const char * fmt, ...)

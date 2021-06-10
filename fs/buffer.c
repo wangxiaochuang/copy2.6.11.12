@@ -358,6 +358,15 @@ static DEFINE_PER_CPU(struct bh_lru, bh_lrus) = {{ NULL }};
 #define bh_lru_unlock()	preempt_enable()
 #endif
 
+
+struct buffer_head *
+__bread(struct block_device *bdev, sector_t block, int size)
+{
+	panic("in __bread");
+	return NULL;
+}
+EXPORT_SYMBOL(__bread);
+
 static void invalidate_bh_lru(void *arg)
 {
 	struct bh_lru *b = &get_cpu_var(bh_lrus);
