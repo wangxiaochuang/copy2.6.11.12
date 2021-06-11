@@ -41,6 +41,18 @@ int vfs_statfs(struct super_block *sb, struct kstatfs *buf)
 
 EXPORT_SYMBOL(vfs_statfs);
 
+static int vfs_statfs_native(struct super_block *sb, struct statfs *buf)
+{
+	panic("in vfs_statfs_native");
+	return 0;
+}
+
+static int vfs_statfs64(struct super_block *sb, struct statfs64 *buf)
+{
+	panic("in vfs_statfs64");
+	return 0;
+}
+
 asmlinkage long sys_statfs(const char __user * path, struct statfs __user * buf)
 {
     return 0;
@@ -48,16 +60,19 @@ asmlinkage long sys_statfs(const char __user * path, struct statfs __user * buf)
 
 asmlinkage long sys_statfs64(const char __user *path, size_t sz, struct statfs64 __user *buf)
 {
+	panic("in sys_statfs64");
     return 0;
 }
 
 asmlinkage long sys_fstatfs(unsigned int fd, struct statfs __user * buf)
 {
+	panic("in sys_fstatfs");
     return 0;
 }
 
 asmlinkage long sys_fstatfs64(unsigned int fd, size_t sz, struct statfs64 __user *buf)
 {
+	panic("in sys_fstatfs64");
     return 0;
 }
 
@@ -77,6 +92,58 @@ int do_truncate(struct dentry *dentry, loff_t length)
 	err = notify_change(dentry, &newattrs);
 	up(&dentry->d_inode->i_sem);
 	return err;
+}
+
+static inline long do_sys_truncate(const char __user * path, loff_t length)
+{
+	panic("in do_sys_truncate");
+	return 0;
+}
+
+static inline long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
+{
+	panic("in do_sys_ftruncate");
+	return 0;
+}
+
+asmlinkage long sys_ftruncate(unsigned int fd, unsigned long length)
+{
+	return do_sys_ftruncate(fd, length, 1);
+}
+
+#if BITS_PER_LONG == 32
+asmlinkage long sys_truncate64(const char __user * path, loff_t length)
+{
+	return do_sys_truncate(path, length);
+}
+
+asmlinkage long sys_ftruncate64(unsigned int fd, loff_t length)
+{
+	return do_sys_ftruncate(fd, length, 0);
+}
+#endif
+
+#ifdef __ARCH_WANT_SYS_UTIME
+asmlinkage long sys_utime(char __user * filename, struct utimbuf __user * times)
+{
+	panic("in sys_utime");
+	return 0;
+}
+#endif
+
+long do_utimes(char __user * filename, struct timeval * times)
+{
+	panic("in do_utimes");
+	return 0;
+}
+
+asmlinkage long sys_utimes(char __user * filename, struct timeval __user * utimes)
+{
+	struct timeval times[2];
+
+	if (utimes && copy_from_user(&times, utimes, sizeof(times)))
+		return -EFAULT;
+	return do_utimes(filename, utimes ? times : NULL);
 }
 
 asmlinkage long sys_access(const char __user * filename, int mode)
@@ -134,6 +201,36 @@ asmlinkage long sys_chdir(const char __user * filename)
 
 dput_and_out:
 	path_release(&nd);
+out:
+	return error;
+}
+
+asmlinkage long sys_fchdir(unsigned int fd)
+{
+	struct file *file;
+	struct dentry *dentry;
+	struct inode *inode;
+	struct vfsmount *mnt;
+	int error;
+
+	error = -EBADF;
+	file = fget(fd);
+	if (!file)
+		goto out;
+
+	dentry = file->f_dentry;
+	mnt = file->f_vfsmnt;
+	inode = dentry->d_inode;
+
+	error = -ENOTDIR;
+	if (!S_ISDIR(inode->i_mode))
+		goto out_putf;
+
+	error = permission(inode, MAY_EXEC, NULL);
+	if (!error)
+		set_fs_pwd(current->fs, mnt, dentry);
+out_putf:
+	fput(file);
 out:
 	return error;
 }
@@ -509,6 +606,17 @@ out_error:
 
 EXPORT_SYMBOL_GPL(sys_open);
 
+#ifndef __alpha__
+/*
+ * For backward compatibility?  Maybe this should be moved
+ * into arch/i386 instead?
+ */
+asmlinkage long sys_creat(const char __user * pathname, int mode)
+{
+	return sys_open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+}
+#endif
+
 int filp_close(struct file *filp, fl_owner_t id)
 {
     int retval;
@@ -535,6 +643,8 @@ int filp_close(struct file *filp, fl_owner_t id)
 	return retval;
 }
 
+EXPORT_SYMBOL(filp_close);
+
 asmlinkage long sys_close(unsigned int fd)
 {
     struct file * filp;
@@ -558,3 +668,27 @@ out_unlock:
 }
 
 EXPORT_SYMBOL(sys_close);
+
+
+asmlinkage long sys_vhangup(void)
+{
+	panic("in sys_vhangup");
+	return 0;
+}
+
+int generic_file_open(struct inode * inode, struct file * filp)
+{
+	if (!(filp->f_flags & O_LARGEFILE) && i_size_read(inode) > MAX_NON_LFS)
+		return -EFBIG;
+	return 0;
+}
+
+EXPORT_SYMBOL(generic_file_open);
+
+int nonseekable_open(struct inode *inode, struct file *filp)
+{
+	filp->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
+	return 0;
+}
+
+EXPORT_SYMBOL(nonseekable_open);

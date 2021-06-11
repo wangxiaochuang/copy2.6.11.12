@@ -60,14 +60,31 @@ struct inode *ext2_new_inode(struct inode *dir, int mode)
 
 unsigned long ext2_count_free_inodes (struct super_block * sb)
 {
-    panic("in ext2_count_free_inodes");
-	return 0;
+    struct ext2_group_desc *desc;
+	unsigned long desc_count = 0;
+	int i;
+
+    for (i = 0; i < EXT2_SB(sb)->s_groups_count; i++) {
+		desc = ext2_get_group_desc (sb, i, NULL);
+		if (!desc)
+			continue;
+		desc_count += le16_to_cpu(desc->bg_free_inodes_count);
+	}
+	return desc_count;
 }
 
 unsigned long ext2_count_dirs (struct super_block * sb)
 {
-    panic("in ext2_count_dirs");
-	return 0;
+    unsigned long count = 0;
+	int i;
+
+	for (i = 0; i < EXT2_SB(sb)->s_groups_count; i++) {
+		struct ext2_group_desc *gdp = ext2_get_group_desc (sb, i, NULL);
+		if (!gdp)
+			continue;
+		count += le16_to_cpu(gdp->bg_used_dirs_count);
+	}
+	return count;
 }
 
 #ifdef CONFIG_EXT2_CHECK

@@ -10,8 +10,34 @@ struct ext2_group_desc * ext2_get_group_desc(struct super_block * sb,
 					     unsigned int block_group,
 					     struct buffer_head ** bh)
 {
-    panic("in ext2_get_group_desc");
-	return NULL;
+	unsigned long group_desc;
+	unsigned long offset;
+	struct ext2_group_desc * desc;
+	struct ext2_sb_info *sbi = EXT2_SB(sb);
+
+	if (block_group >= sbi->s_groups_count) {
+		ext2_error (sb, "ext2_get_group_desc",
+			    "block_group >= groups_count - "
+			    "block_group = %d, groups_count = %lu",
+			    block_group, sbi->s_groups_count);
+
+		return NULL;
+	}
+
+	group_desc = block_group >> EXT2_DESC_PER_BLOCK_BITS(sb);
+	offset = block_group & (EXT2_DESC_PER_BLOCK(sb) - 1);
+	if (!sbi->s_group_desc[group_desc]) {
+		ext2_error (sb, "ext2_get_group_desc",
+			    "Group descriptor not loaded - "
+			    "block_group = %d, group_desc = %lu, desc = %lu",
+			     block_group, group_desc, offset);
+		return NULL;
+	}
+
+	desc = (struct ext2_group_desc *) sbi->s_group_desc[group_desc]->b_data;
+	if (bh)
+		*bh = sbi->s_group_desc[group_desc];
+	return desc + offset;
 }
 
 static struct buffer_head *
@@ -66,8 +92,17 @@ int ext2_new_block(struct inode *inode, unsigned long goal,
 
 unsigned long ext2_count_free_blocks (struct super_block * sb)
 {
-    panic("in ext2_count_free_blocks");
-	return 0;
+	struct ext2_group_desc * desc;
+	unsigned long desc_count = 0;
+	int i;
+
+	for (i = 0; i < EXT2_SB(sb)->s_groups_count; i++) {
+                desc = ext2_get_group_desc (sb, i, NULL);
+                if (!desc)
+                        continue;
+                desc_count += le16_to_cpu(desc->bg_free_blocks_count);
+	}
+	return desc_count;
 }
 
 static inline int

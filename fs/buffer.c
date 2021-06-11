@@ -82,6 +82,37 @@ static void buffer_io_error(struct buffer_head *bh)
 			(unsigned long long)bh->b_blocknr);
 }
 
+void end_buffer_read_sync(struct buffer_head *bh, int uptodate)
+{
+	if (uptodate) {
+		set_buffer_uptodate(bh);
+	} else {
+		clear_buffer_uptodate(bh);
+	}
+	unlock_buffer(bh);
+	put_bh(bh);
+}
+
+void end_buffer_write_sync(struct buffer_head *bh, int uptodate)
+{
+	char b[BDEVNAME_SIZE];
+
+	if (uptodate) {
+		set_buffer_uptodate(bh);
+	} else {
+		if (!buffer_eopnotsupp(bh) && printk_ratelimit()) {
+			buffer_io_error(bh);
+			printk(KERN_WARNING "lost page write due to "
+					"I/O error on %s\n",
+				       bdevname(bh->b_bdev, b));
+		}
+		set_buffer_write_io_error(bh);
+		clear_buffer_uptodate(bh);
+	}
+	unlock_buffer(bh);
+	put_bh(bh);
+}
+
 int sync_blockdev(struct block_device *bdev)
 {
 	int ret = 0;
@@ -134,6 +165,71 @@ asmlinkage long sys_sync(void)
 {
 	do_sync(1);
 	return 0;
+}
+
+int file_fsync(struct file *filp, struct dentry *dentry, int datasync)
+{
+	panic("in file_fsync");
+	return 0;
+}
+
+asmlinkage long sys_fsync(unsigned int fd)
+{
+	panic("in sys_fsync");
+	return 0;
+}
+
+asmlinkage long sys_fdatasync(unsigned int fd)
+{
+	panic("in sys_fdatasync");
+	return 0;
+}
+
+static struct buffer_head *
+__find_get_block_slow(struct block_device *bdev, sector_t block, int unused)
+{
+	struct inode *bd_inode = bdev->bd_inode;
+	struct address_space *bd_mapping = bd_inode->i_mapping;
+	struct buffer_head *ret = NULL;
+	pgoff_t index;
+	struct buffer_head *bh;
+	struct buffer_head *head;
+	struct page *page;
+	int all_mapped = 1;
+
+	index = block >> (PAGE_CACHE_SHIFT - bd_inode->i_blkbits);
+	page = find_get_page(bd_mapping, index);
+	if (!page)
+		goto out;
+	
+	spin_lock(&bd_mapping->private_lock);
+	if (!page_has_buffers(page))
+		goto out_unlock;
+	head = page_buffers(page);
+	bh = head;
+	do {
+		if (bh->b_blocknr == block) {
+			ret = bh;
+			get_bh(bh);
+			goto out_unlock;
+		}
+		if (!buffer_mapped(bh))
+			all_mapped = 0;
+		bh = bh->b_this_page;
+	} while (bh != head);
+
+	if (all_mapped) {
+		printk("__find_get_block_slow() failed. "
+			"block=%llu, b_blocknr=%llu\n",
+			(unsigned long long)block, (unsigned long long)bh->b_blocknr);
+		printk("b_state=0x%08lx, b_size=%u\n", bh->b_state, bh->b_size);
+		printk("device blocksize: %d\n", 1 << bd_inode->i_blkbits);
+	}
+out_unlock:
+	spin_unlock(&bd_mapping->private_lock);
+	page_cache_release(page);
+out:
+	return ret;
 }
 
 void invalidate_bdev(struct block_device *bdev, int destroy_dirty_buffers)
@@ -332,6 +428,137 @@ no_grow:
 }
 EXPORT_SYMBOL_GPL(alloc_page_buffers);
 
+
+static inline void
+link_dev_buffers(struct page *page, struct buffer_head *head)
+{
+	struct buffer_head *bh, *tail;
+
+	bh = head;
+	do {
+		tail = bh;
+		bh = bh->b_this_page;
+	} while (bh);
+	tail->b_this_page = head;
+	attach_page_buffers(page, head);
+}
+
+static void
+init_page_buffers(struct page *page, struct block_device *bdev,
+			sector_t block, int size)
+{
+	struct buffer_head *head = page_buffers(page);
+	struct buffer_head *bh = head;
+	int uptodate = PageUptodate(page);
+
+	do {
+		if (!buffer_mapped(bh)) {
+			init_buffer(bh, NULL, NULL);
+			bh->b_bdev = bdev;
+			bh->b_blocknr = block;
+			if (uptodate)
+				set_buffer_uptodate(bh);
+			set_buffer_mapped(bh);
+		}
+		block++;
+		bh = bh->b_this_page;
+	} while (bh != head);
+}
+
+static struct page *
+grow_dev_page(struct block_device *bdev, sector_t block,
+		pgoff_t index, int size)
+{
+	struct inode *inode = bdev->bd_inode;
+	struct page *page;
+	struct buffer_head *bh;
+
+	page = find_or_create_page(inode->i_mapping, index, GFP_NOFS);
+	if (!page)
+		return NULL;
+	if (!PageLocked(page))
+		BUG();
+	if (page_has_buffers(page)) {
+		bh = page_buffers(page);
+		if (bh->b_size == size) {
+			init_page_buffers(page, bdev, block, size);
+			return page;
+		}
+		if (!try_to_free_buffers(page))
+			goto failed;
+	}
+
+	bh = alloc_page_buffers(page, size, 0);
+	if (!bh)
+		goto failed;
+	
+	spin_lock(&inode->i_mapping->private_lock);
+	link_dev_buffers(page, bh);
+	init_page_buffers(page, bdev, block, size);
+	spin_unlock(&inode->i_mapping->private_lock);
+	return page;
+failed:
+	BUG();
+	unlock_page(page);
+	page_cache_release(page);
+	return NULL;
+}
+
+static inline int
+grow_buffers(struct block_device *bdev, sector_t block, int size)
+{
+	struct page *page;
+	pgoff_t index;
+	int sizebits;
+
+	sizebits = -1;
+	do {
+		sizebits++;
+	} while ((size << sizebits) < PAGE_SIZE);
+
+	index = block >> sizebits;
+	block = index << sizebits;
+
+	page = grow_dev_page(bdev, block, index, size);
+	if (!page)
+		return 0;
+	unlock_page(page);
+	page_cache_release(page);
+	return 1;
+}
+
+struct buffer_head *
+__getblk_slow(struct block_device *bdev, sector_t block, int size)
+{
+	if (unlikely(size & (bdev_hardsect_size(bdev)-1) || 
+			(size < 512 || size > PAGE_SIZE))) {
+		printk(KERN_ERR "getblk(): invalid block size %d requested\n",
+					size);
+		printk(KERN_ERR "hardsect size: %d\n",
+					bdev_hardsect_size(bdev));
+
+		dump_stack();
+		return NULL;
+	}
+
+	for (;;) {
+		struct buffer_head *bh;
+
+		bh = __find_get_block(bdev, block, size);
+		if (bh)
+			return bh;
+		
+		if (!grow_buffers(bdev, block, size))
+			free_more_memory();
+	}
+}
+
+void fastcall mark_buffer_dirty(struct buffer_head *bh)
+{
+	if (!buffer_dirty(bh) && !test_set_buffer_dirty(bh))
+		__set_page_dirty_nobuffers(bh->b_page);
+}
+
 void __brelse(struct buffer_head * buf)
 {
 	if (atomic_read(&buf->b_count)) {
@@ -340,6 +567,41 @@ void __brelse(struct buffer_head * buf)
 	}
 	printk(KERN_ERR "VFS: brelse: Trying to free free buffer\n");
 	WARN_ON(1);
+}
+
+/*
+ * bforget() is like brelse(), except it discards any
+ * potentially dirty data.
+ */
+void __bforget(struct buffer_head *bh)
+{
+	clear_buffer_dirty(bh);
+	if (!list_empty(&bh->b_assoc_buffers)) {
+		struct address_space *buffer_mapping = bh->b_page->mapping;
+
+		spin_lock(&buffer_mapping->private_lock);
+		list_del_init(&bh->b_assoc_buffers);
+		spin_unlock(&buffer_mapping->private_lock);
+	}
+	__brelse(bh);
+}
+
+static struct buffer_head *__bread_slow(struct buffer_head *bh)
+{
+	lock_buffer(bh);
+	if (buffer_uptodate(bh)) {
+		unlock_buffer(bh);
+		return bh;
+	} else {
+		get_bh(bh);
+		bh->b_end_io = end_buffer_read_sync;
+		submit_bh(READ, bh);
+		wait_on_buffer(bh);
+		if (buffer_uptodate(bh))
+			return bh;
+	}
+	brelse(bh);
+	return NULL;
 }
 
 #define BH_LRU_SIZE	8
@@ -358,12 +620,126 @@ static DEFINE_PER_CPU(struct bh_lru, bh_lrus) = {{ NULL }};
 #define bh_lru_unlock()	preempt_enable()
 #endif
 
+static inline void check_irqs_on(void)
+{
+#ifdef irqs_disabled
+	BUG_ON(irqs_disabled());
+#endif
+}
+
+static void bh_lru_install(struct buffer_head *bh)
+{
+	struct buffer_head *evictee = NULL;
+	struct bh_lru *lru;
+
+	check_irqs_on();
+	bh_lru_lock();
+	lru = &__get_cpu_var(bh_lrus);
+	if (lru->bhs[0] != bh) {
+		struct buffer_head *bhs[BH_LRU_SIZE];
+		int in;
+		int out = 0;
+
+		get_bh(bh);
+		bhs[out++] = bh;
+		for (in = 0; in < BH_LRU_SIZE; in++) {
+			struct buffer_head *bh2 = lru->bhs[in];
+
+			if (bh2 == bh) {
+				__brelse(bh2);
+			} else {
+				if (out >= BH_LRU_SIZE) {
+					BUG_ON(evictee != NULL);
+					evictee = bh2;
+				} else {
+					bhs[out++] = bh2;
+				}
+			}
+		}
+		while (out < BH_LRU_SIZE)
+			bhs[out++] = NULL;
+		memcpy(lru->bhs, bhs, sizeof(bhs));
+	}
+	bh_lru_unlock();
+
+	if (evictee)
+		__brelse(evictee);
+}
+
+static inline struct buffer_head *
+lookup_bh_lru(struct block_device *bdev, sector_t block, int size)
+{
+	struct buffer_head *ret = NULL;
+	struct bh_lru *lru;
+	int i;
+
+	check_irqs_on();
+	bh_lru_lock();
+	lru = &__get_cpu_var(bh_lrus);
+	for (i = 0; i < BH_LRU_SIZE; i++) {
+		struct buffer_head *bh = lru->bhs[i];
+
+		if (bh && bh->b_bdev == bdev &&
+				bh->b_blocknr == block && bh->b_size == size) {
+			if (i) {
+				while (i) {
+					lru->bhs[i] = lru->bhs[i-1];
+					i--;
+				}
+				lru->bhs[0] = bh;
+			}
+			get_bh(bh);
+			ret = bh;
+			break;
+		}
+	}
+	bh_lru_unlock();
+	return ret;
+}
+
+struct buffer_head *
+__find_get_block(struct block_device *bdev, sector_t block, int size)
+{
+	// 先在本地cpu缓存lru查找
+	struct buffer_head *bh = lookup_bh_lru(bdev, block, size);
+
+	if (bh == NULL) {
+		bh = __find_get_block_slow(bdev, block, size);
+		if (bh)
+			bh_lru_install(bh);
+	}
+	if (bh)
+		touch_buffer(bh);
+	return bh;
+}
+EXPORT_SYMBOL(__find_get_block);
+
+struct buffer_head *
+__getblk(struct block_device *bdev, sector_t block, int size)
+{
+	struct buffer_head *bh = __find_get_block(bdev, block, size);
+
+	might_sleep();
+	if (bh == NULL)
+		bh = __getblk_slow(bdev, block, size);
+	return bh;
+}
+EXPORT_SYMBOL(__getblk);
+
+void __breadahead(struct block_device *bdev, sector_t block, int size)
+{
+	panic("in __breadahead");
+}
+EXPORT_SYMBOL(__breadahead);
 
 struct buffer_head *
 __bread(struct block_device *bdev, sector_t block, int size)
 {
-	panic("in __bread");
-	return NULL;
+	struct buffer_head *bh = __getblk(bdev, block, size);
+
+	if (!buffer_uptodate(bh))
+		bh = __bread_slow(bh);
+	return bh;
 }
 EXPORT_SYMBOL(__bread);
 
@@ -734,8 +1110,25 @@ void ll_rw_block(int rw, int nr, struct buffer_head *bhs[])
 
 int sync_dirty_buffer(struct buffer_head *bh)
 {
-	panic("in sync_dirty_buffer");
-	return 0;
+	int ret = 0;
+
+	WARN_ON(atomic_read(&bh->b_count) < 1);
+	lock_buffer(bh);
+	if (test_clear_buffer_dirty(bh)) {
+		get_bh(bh);
+		bh->b_end_io = end_buffer_write_sync;
+		ret = submit_bh(WRITE, bh);
+		wait_on_buffer(bh);
+		if (buffer_eopnotsupp(bh)) {
+			clear_buffer_eopnotsupp(bh);
+			ret = -EOPNOTSUPP;
+		}
+		if (!ret && !buffer_uptodate(bh))
+			ret = -EIO;
+	} else {
+		unlock_buffer(bh);
+	}
+	return ret;
 }
 
 

@@ -613,6 +613,15 @@ struct inode *iget_locked(struct super_block *sb, unsigned long ino)
 
 EXPORT_SYMBOL(iget_locked);
 
+void remove_inode_hash(struct inode *inode)
+{
+	spin_lock(&inode_lock);
+	hlist_del_init(&inode->i_hash);
+	spin_unlock(&inode_lock);
+}
+
+EXPORT_SYMBOL(remove_inode_hash);
+
 void generic_delete_inode(struct inode *inode)
 {
 	struct super_operations *op = inode->i_sb->s_op;

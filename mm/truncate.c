@@ -85,3 +85,61 @@ unsigned long invalidate_inode_pages(struct address_space *mapping)
 }
 
 EXPORT_SYMBOL(invalidate_inode_pages);
+
+
+int invalidate_inode_pages2(struct address_space *mapping)
+{
+	struct pagevec pvec;
+	pgoff_t next = 0;
+	int i;
+	int ret = 0;
+	int did_full_unmap = 0;
+
+	pagevec_init(&pvec, 0);
+	while (!ret && pagevec_lookup(&pvec, mapping, next, PAGEVEC_SIZE)) {
+		for (i = 0; !ret && i < pagevec_count(&pvec); i++) {
+			struct page *page = pvec.pages[i];
+			int was_dirty;
+
+			lock_page(page);
+			if (page->mapping != mapping) {	/* truncate race? */
+				unlock_page(page);
+				continue;
+			}
+			wait_on_page_writeback(page);
+			next = page->index + 1;
+			while (page_mapped(page)) {
+				if (!did_full_unmap) {
+					/*
+					 * Zap the rest of the file in one hit.
+					 * FIXME: invalidate_inode_pages2()
+					 * should take start/end offsets.
+					 */
+					unmap_mapping_range(mapping,
+						page->index << PAGE_CACHE_SHIFT,
+					  	-1, 0);
+					did_full_unmap = 1;
+				} else {
+					/*
+					 * Just zap this page
+					 */
+					unmap_mapping_range(mapping,
+					  page->index << PAGE_CACHE_SHIFT,
+					  (page->index << PAGE_CACHE_SHIFT)+1,
+					  0);
+				}
+			}
+			was_dirty = test_clear_page_dirty(page);
+			if (!invalidate_complete_page(mapping, page)) {
+				if (was_dirty)
+					set_page_dirty(page);
+				ret = -EIO;
+			}
+			unlock_page(page);
+		}
+		pagevec_release(&pvec);
+		cond_resched();
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(invalidate_inode_pages2);

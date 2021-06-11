@@ -92,6 +92,7 @@ static void swap_info_put(struct swap_info_struct * p)
 
 void swap_free(swp_entry_t entry)
 {
+	panic("in swap_free");
 }
 
 /*
@@ -143,4 +144,10 @@ int can_share_swap_page(struct page *page)
 		retval = 1;
     }
     return retval;
+}
+
+
+void free_swap_and_cache(swp_entry_t entry)
+{
+	panic("in free_swap_and_cache");
 }

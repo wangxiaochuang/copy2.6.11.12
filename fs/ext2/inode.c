@@ -242,8 +242,45 @@ void ext2_truncate (struct inode * inode)
 static struct ext2_inode *ext2_get_inode(struct super_block *sb, ino_t ino,
 					struct buffer_head **p)
 {
-	panic("in ext2_get_inode");
-	return NULL;
+	struct buffer_head * bh;
+	unsigned long block_group;
+	unsigned long block;
+	unsigned long offset;
+	struct ext2_group_desc * gdp;
+
+	*p = NULL;
+	if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
+	    ino > le32_to_cpu(EXT2_SB(sb)->s_es->s_inodes_count))
+		goto Einval;
+	
+	block_group = (ino - 1) / EXT2_INODES_PER_GROUP(sb);
+	gdp = ext2_get_group_desc(sb, block_group, &bh);
+	if (!gdp)
+		goto Egdp;
+	
+	/*
+	 * Figure out the offset within the block group inode table
+	 */
+	offset = ((ino - 1) % EXT2_INODES_PER_GROUP(sb)) * EXT2_INODE_SIZE(sb);
+	block = le32_to_cpu(gdp->bg_inode_table) +
+		(offset >> EXT2_BLOCK_SIZE_BITS(sb));
+	if (!(bh = sb_bread(sb, block)))
+		goto Eio;
+	
+	*p = bh;
+	offset &= (EXT2_BLOCK_SIZE(sb) - 1);
+	return (struct ext2_inode *) (bh->b_data + offset);
+
+Einval:
+	ext2_error(sb, "ext2_get_inode", "bad inode number: %lu",
+		   (unsigned long) ino);
+	return ERR_PTR(-EINVAL);
+Eio:
+	ext2_error(sb, "ext2_get_inode",
+		   "unable to read inode block - inode=%lu, block=%lu",
+		   (unsigned long) ino, block);
+Egdp:
+	return ERR_PTR(-EIO);
 }
 
 
@@ -266,7 +303,110 @@ void ext2_set_inode_flags(struct inode *inode)
 
 void ext2_read_inode (struct inode * inode)
 {
-    panic("in ext2_read_inode");
+    	struct ext2_inode_info *ei = EXT2_I(inode);
+	ino_t ino = inode->i_ino;
+	struct buffer_head * bh;
+	struct ext2_inode * raw_inode = ext2_get_inode(inode->i_sb, ino, &bh);
+	int n;
+#ifdef CONFIG_EXT2_FS_POSIX_ACL
+	ei->i_acl = EXT2_ACL_NOT_CACHED;
+	ei->i_default_acl = EXT2_ACL_NOT_CACHED;
+#endif
+	if (IS_ERR(raw_inode))
+ 		goto bad_inode;
+
+	inode->i_mode = le16_to_cpu(raw_inode->i_mode);
+	inode->i_uid = (uid_t)le16_to_cpu(raw_inode->i_uid_low);
+	inode->i_gid = (gid_t)le16_to_cpu(raw_inode->i_gid_low);
+	if (!(test_opt (inode->i_sb, NO_UID32))) {
+		inode->i_uid |= le16_to_cpu(raw_inode->i_uid_high) << 16;
+		inode->i_gid |= le16_to_cpu(raw_inode->i_gid_high) << 16;
+	}
+	inode->i_nlink = le16_to_cpu(raw_inode->i_links_count);
+	inode->i_size = le32_to_cpu(raw_inode->i_size);
+	inode->i_atime.tv_sec = le32_to_cpu(raw_inode->i_atime);
+	inode->i_ctime.tv_sec = le32_to_cpu(raw_inode->i_ctime);
+	inode->i_mtime.tv_sec = le32_to_cpu(raw_inode->i_mtime);
+	inode->i_atime.tv_nsec = inode->i_mtime.tv_nsec = inode->i_ctime.tv_nsec = 0;
+	ei->i_dtime = le32_to_cpu(raw_inode->i_dtime);
+	/* We now have enough fields to check if the inode was active or not.
+	 * This is needed because nfsd might try to access dead inodes
+	 * the test is that same one that e2fsck uses
+	 * NeilBrown 1999oct15
+	 */
+	if (inode->i_nlink == 0 && (inode->i_mode == 0 || ei->i_dtime)) {
+		/* this inode is deleted */
+		brelse (bh);
+		goto bad_inode;
+	}
+	inode->i_blksize = PAGE_SIZE;	/* This is the optimal IO size (for stat), not the fs block size */
+	inode->i_blocks = le32_to_cpu(raw_inode->i_blocks);
+	ei->i_flags = le32_to_cpu(raw_inode->i_flags);
+	ei->i_faddr = le32_to_cpu(raw_inode->i_faddr);
+	ei->i_frag_no = raw_inode->i_frag;
+	ei->i_frag_size = raw_inode->i_fsize;
+	ei->i_file_acl = le32_to_cpu(raw_inode->i_file_acl);
+	ei->i_dir_acl = 0;
+	if (S_ISREG(inode->i_mode))
+		inode->i_size |= ((__u64)le32_to_cpu(raw_inode->i_size_high)) << 32;
+	else
+		ei->i_dir_acl = le32_to_cpu(raw_inode->i_dir_acl);
+	ei->i_dtime = 0;
+	inode->i_generation = le32_to_cpu(raw_inode->i_generation);
+	ei->i_state = 0;
+	ei->i_next_alloc_block = 0;
+	ei->i_next_alloc_goal = 0;
+	ei->i_prealloc_count = 0;
+	ei->i_block_group = (ino - 1) / EXT2_INODES_PER_GROUP(inode->i_sb);
+	ei->i_dir_start_lookup = 0;
+
+	/*
+	 * NOTE! The in-memory inode i_data array is in little-endian order
+	 * even on big-endian machines: we do NOT byteswap the block numbers!
+	 */
+	for (n = 0; n < EXT2_N_BLOCKS; n++)
+		ei->i_data[n] = raw_inode->i_block[n];
+
+	if (S_ISREG(inode->i_mode)) {
+		inode->i_op = &ext2_file_inode_operations;
+		inode->i_fop = &ext2_file_operations;
+		if (test_opt(inode->i_sb, NOBH))
+			inode->i_mapping->a_ops = &ext2_nobh_aops;
+		else
+			inode->i_mapping->a_ops = &ext2_aops;
+	} else if (S_ISDIR(inode->i_mode)) {
+		inode->i_op = &ext2_dir_inode_operations;
+		inode->i_fop = &ext2_dir_operations;
+		if (test_opt(inode->i_sb, NOBH))
+			inode->i_mapping->a_ops = &ext2_nobh_aops;
+		else
+			inode->i_mapping->a_ops = &ext2_aops;
+	} else if (S_ISLNK(inode->i_mode)) {
+		if (ext2_inode_is_fast_symlink(inode))
+			inode->i_op = &ext2_fast_symlink_inode_operations;
+		else {
+			inode->i_op = &ext2_symlink_inode_operations;
+			if (test_opt(inode->i_sb, NOBH))
+				inode->i_mapping->a_ops = &ext2_nobh_aops;
+			else
+				inode->i_mapping->a_ops = &ext2_aops;
+		}
+	} else {
+		inode->i_op = &ext2_special_inode_operations;
+		if (raw_inode->i_block[0])
+			init_special_inode(inode, inode->i_mode,
+			   old_decode_dev(le32_to_cpu(raw_inode->i_block[0])));
+		else 
+			init_special_inode(inode, inode->i_mode,
+			   new_decode_dev(le32_to_cpu(raw_inode->i_block[1])));
+	}
+	brelse (bh);
+	ext2_set_inode_flags(inode);
+	return;
+	
+bad_inode:
+	make_bad_inode(inode);
+	return;
 }
 
 static int ext2_update_inode(struct inode * inode, int do_sync)
