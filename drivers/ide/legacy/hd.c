@@ -419,14 +419,21 @@ repeat:
 	head  = track % disk->head;
 	cyl   = track / disk->head;
 
+
 	if (req->flags & REQ_CMD) {
 		switch (rq_data_dir(req)) {
 		case READ:
+printk("%s: %sing: CHS=%d/%d/%d, sectors=%d, buffer=%p\n",
+		req->rq_disk->disk_name, "read",
+		cyl, head, sec, nsect, req->buffer);
 			hd_out(disk,nsect,sec,head,cyl,WIN_READ,&read_intr);
 			if (reset)
 				goto repeat;
 			break;
 		case WRITE:
+printk("%s: %sing: CHS=%d/%d/%d, sectors=%d, buffer=%p\n",
+		req->rq_disk->disk_name, "write",
+		cyl, head, sec, nsect, req->buffer);
 			hd_out(disk,nsect,sec,head,cyl,WIN_WRITE,&write_intr);
 			if (reset)
 				goto repeat;
