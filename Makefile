@@ -746,7 +746,9 @@ symbol:
 
 .PHONY: qemu bochs kill gdb
 qemu:
-	qemu-system-i386 -s -S -smp 1 -m 1G -drive format=raw,file=../myfd.img,index=0,if=floppy -hda debug/myrootfs.qcow2 -boot a -curses
+	#qemu-system-i386 -s -S -smp 1 -m 1G -drive format=raw,file=../myfd.img,index=0,if=floppy -hda debug/myrootfs.qcow2 -boot a -curses
+	qemu-system-i386 -s -S -smp 1 -m 1G -drive format=raw,file=../myfd.img,index=0,if=floppy -hda debug/centos5_32.vhd -boot a -curses
+	#qemu-system-i386 -s -S -smp 1 -m 1G -drive format=raw,file=../myfd.img,index=0,if=floppy -drive format=raw,file=debug/myrootfs.raw -boot a -curses
 kill:
 	killall qemu-system-i386
 bochs:

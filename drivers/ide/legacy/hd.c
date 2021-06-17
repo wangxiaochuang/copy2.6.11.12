@@ -111,7 +111,19 @@ unsigned long read_timer(void)
 
 static void __init hd_setup(char *str, int *ints)
 {
-	panic("in hd_setup");
+	int hdind = 0;
+
+	if (ints[0] != 3)
+		return;
+	if (hd_info[0].head != 0)
+		hdind=1;
+	hd_info[hdind].head = ints[2];
+	hd_info[hdind].sect = ints[3];
+	hd_info[hdind].cyl = ints[1];
+	hd_info[hdind].wpcom = 0;
+	hd_info[hdind].lzone = ints[1];
+	hd_info[hdind].ctl = (ints[2] > 8 ? 8 : 0);
+	NR_HD = hdind+1;
 }
 
 static void dump_status (const char *msg, unsigned int stat)
@@ -596,5 +608,15 @@ Enomem:
 		put_disk(hd_gendisk[drive]);
 	goto out;
 }
+
+static int parse_hd_setup (char *line) {
+	int ints[6];
+
+	(void) get_options(line, ARRAY_SIZE(ints), ints);
+	hd_setup(NULL, ints);
+
+	return 1;
+}
+__setup("hd=", parse_hd_setup);
 
 module_init(hd_init);

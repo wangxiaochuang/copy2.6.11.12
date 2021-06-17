@@ -1,4 +1,5 @@
-debug/myrootfs.qcow2
+*.qcow2
+*.vhd
 vmlinux
 .vscode/
 *.tmp

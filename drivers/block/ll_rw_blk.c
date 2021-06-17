@@ -572,7 +572,21 @@ new_hw_segment:
 int blk_phys_contig_segment(request_queue_t *q, struct bio *bio,
 				   struct bio *nxt)
 {
-	panic("in blk_phys_contig_segment");
+	if (!(q->queue_flags & (1 << QUEUE_FLAG_CLUSTER)))
+		return 0;
+
+	if (!BIOVEC_PHYS_MERGEABLE(__BVEC_END(bio), __BVEC_START(nxt)))
+		return 0;
+	if (bio->bi_size + nxt->bi_size > q->max_segment_size)
+		return 0;
+
+	/*
+	 * bio and nxt are contigous in memory, check if the queue allows
+	 * these two to be merged into one
+	 */
+	if (BIO_SEG_BOUNDARY(q, bio, nxt))
+		return 1;
+
 	return 0;
 }
 
@@ -581,8 +595,17 @@ EXPORT_SYMBOL(blk_phys_contig_segment);
 int blk_hw_contig_segment(request_queue_t *q, struct bio *bio,
 				 struct bio *nxt)
 {
-	panic("in blk_hw_contig_segment");
-	return 0;
+	if (unlikely(!bio_flagged(bio, BIO_SEG_VALID)))
+		blk_recount_segments(q, bio);
+	if (unlikely(!bio_flagged(nxt, BIO_SEG_VALID)))
+		blk_recount_segments(q, nxt);
+	if (!BIOVEC_VIRT_MERGEABLE(__BVEC_END(bio), __BVEC_START(nxt)) ||
+	    BIOVEC_VIRT_OVERSIZE(bio->bi_hw_front_size + bio->bi_hw_back_size))
+		return 0;
+	if (bio->bi_size + nxt->bi_size > q->max_segment_size)
+		return 0;
+
+	return 1;
 }
 
 EXPORT_SYMBOL(blk_hw_contig_segment);
