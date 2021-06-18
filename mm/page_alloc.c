@@ -782,6 +782,25 @@ void __mod_page_state(unsigned offset, unsigned long delta)
 	local_irq_restore(flags);
 }
 
+
+void si_meminfo(struct sysinfo *val)
+{
+	val->totalram = totalram_pages;
+	val->sharedram = 0;
+	val->freeram = nr_free_pages();
+	val->bufferram = nr_blockdev_pages();
+#ifdef CONFIG_HIGHMEM
+	val->totalhigh = totalhigh_pages;
+	val->freehigh = nr_free_highpages();
+#else
+	val->totalhigh = 0;
+	val->freehigh = 0;
+#endif
+	val->mem_unit = PAGE_SIZE;
+}
+
+EXPORT_SYMBOL(si_meminfo);
+
 /*
  * Builds allocation fallback zone lists.
  */

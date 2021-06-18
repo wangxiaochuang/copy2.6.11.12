@@ -40,11 +40,42 @@ void cd_forget(struct inode *inode)
 	spin_unlock(&cdev_lock);
 }
 
+void cdev_purge(struct cdev *cdev)
+{
+	spin_lock(&cdev_lock);
+	while (!list_empty(&cdev->list)) {
+		struct inode *inode;
+		inode = container_of(cdev->list.next, struct inode, i_devices);
+		list_del_init(&inode->i_devices);
+		inode->i_cdev = NULL;
+	}
+	spin_unlock(&cdev_lock);
+}
+
 struct file_operations def_chr_fops = {
 	.open = chrdev_open,
 };
 
 static decl_subsys(cdev, NULL, NULL);
+
+static void cdev_default_release(struct kobject *kobj)
+{
+	struct cdev *p = container_of(kobj, struct cdev, kobj);
+	cdev_purge(p);
+}
+
+static struct kobj_type ktype_cdev_default = {
+	.release	= cdev_default_release,
+};
+
+void cdev_init(struct cdev *cdev, struct file_operations *fops)
+{
+	memset(cdev, 0, sizeof *cdev);
+	INIT_LIST_HEAD(&cdev->list);
+	cdev->kobj.ktype = &ktype_cdev_default;
+	kobject_init(&cdev->kobj);
+	cdev->ops = fops;
+}
 
 static struct kobject *base_probe(dev_t dev, int *part, void *data)
 {

@@ -151,3 +151,38 @@ void free_swap_and_cache(swp_entry_t entry)
 {
 	panic("in free_swap_and_cache");
 }
+
+void si_swapinfo(struct sysinfo *val)
+{
+	unsigned int i;
+	unsigned long nr_to_be_unused = 0;
+
+	swap_list_lock();
+	for (i = 0; i < nr_swapfiles; i++) {
+		if (!(swap_info[i].flags & SWP_USED) ||
+		     (swap_info[i].flags & SWP_WRITEOK))
+			continue;
+		nr_to_be_unused += swap_info[i].inuse_pages;
+	}
+	val->freeswap = nr_swap_pages + nr_to_be_unused;
+	val->totalswap = total_swap_pages + nr_to_be_unused;
+	swap_list_unlock();
+}
+
+int swap_duplicate(swp_entry_t entry)
+{
+	panic("in swap_duplicate");
+	return 0;
+}
+
+struct swap_info_struct *
+get_swap_info_struct(unsigned type)
+{
+	return &swap_info[type];
+}
+
+int valid_swaphandles(swp_entry_t entry, unsigned long *offset)
+{
+	panic("in valid_swaphandles");
+	return 0;
+}

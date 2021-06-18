@@ -5,7 +5,7 @@
 # 			   cpu.o firmware.o init.o map.o dmapool.o \
 # 			   attribute_container.o transport_class.o
 obj-y			:= core.o sys.o interface.o bus.o \
-				class.o platform.o \
+				class.o class_simple.o platform.o \
 				cpu.o firmware.o init.o map.o \
 				attribute_container.o
 obj-y			+= power/

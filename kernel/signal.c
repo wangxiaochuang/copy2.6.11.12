@@ -824,7 +824,14 @@ send_sig(int sig, struct task_struct *p, int priv)
 	return send_sig_info(sig, (void*)(long)(priv != 0), p);
 }
 
+int
+kill_pg(pid_t pgrp, int sig, int priv)
+{
+	return kill_pg_info(sig, (void *)(long)(priv != 0), pgrp);
+}
+
 int kill_proc(pid_t pid, int sig, int priv) {
+	panic("in kill_proc");
 	return 0;
 }
 

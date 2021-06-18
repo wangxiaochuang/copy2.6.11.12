@@ -156,9 +156,160 @@ inline int bio_hw_segments(request_queue_t *q, struct bio *bio)
 	return bio->bi_hw_segments;
 }
 
+inline void __bio_clone(struct bio *bio, struct bio *bio_src)
+{
+	request_queue_t *q = bdev_get_queue(bio_src->bi_bdev);
 
+	memcpy(bio->bi_io_vec, bio_src->bi_io_vec, bio_src->bi_max_vecs * sizeof(struct bio_vec));
 
+	bio->bi_sector = bio_src->bi_sector;
+	bio->bi_bdev = bio_src->bi_bdev;
+	bio->bi_flags |= 1 << BIO_CLONED;
+	bio->bi_rw = bio_src->bi_rw;
 
+	/*
+	 * notes -- maybe just leave bi_idx alone. assume identical mapping
+	 * for the clone
+	 */
+	bio->bi_vcnt = bio_src->bi_vcnt;
+	bio->bi_size = bio_src->bi_size;
+	bio_phys_segments(q, bio);
+	bio_hw_segments(q, bio);
+}
+
+struct bio *bio_clone(struct bio *bio, int gfp_mask)
+{
+	struct bio *b = bio_alloc(gfp_mask, bio->bi_max_vecs);
+
+	if (b)
+		__bio_clone(b, bio);
+
+	return b;
+}
+
+int bio_get_nr_vecs(struct block_device *bdev)
+{
+	request_queue_t *q = bdev_get_queue(bdev);
+	int nr_pages;
+
+	nr_pages = ((q->max_sectors << 9) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	if (nr_pages > q->max_phys_segments)
+		nr_pages = q->max_phys_segments;
+	if (nr_pages > q->max_hw_segments)
+		nr_pages = q->max_hw_segments;
+
+	return nr_pages;
+}
+
+static int __bio_add_page(request_queue_t *q, struct bio *bio, struct page
+			  *page, unsigned int len, unsigned int offset)
+{
+	int retried_segments = 0;
+	struct bio_vec *bvec;
+
+	/*
+	 * cloned bio must not modify vec list
+	 */
+	if (unlikely(bio_flagged(bio, BIO_CLONED)))
+		return 0;
+
+	if (bio->bi_vcnt >= bio->bi_max_vecs)
+		return 0;
+
+	if (((bio->bi_size + len) >> 9) > q->max_sectors)
+		return 0;
+
+	/*
+	 * we might lose a segment or two here, but rather that than
+	 * make this too complex.
+	 */
+
+	while (bio->bi_phys_segments >= q->max_phys_segments
+	       || bio->bi_hw_segments >= q->max_hw_segments
+	       || BIOVEC_VIRT_OVERSIZE(bio->bi_size)) {
+
+		if (retried_segments)
+			return 0;
+
+		retried_segments = 1;
+		blk_recount_segments(q, bio);
+	}
+
+	/*
+	 * setup the new entry, we might clear it again later if we
+	 * cannot add the page
+	 */
+	bvec = &bio->bi_io_vec[bio->bi_vcnt];
+	bvec->bv_page = page;
+	bvec->bv_len = len;
+	bvec->bv_offset = offset;
+
+	/*
+	 * if queue has other restrictions (eg varying max sector size
+	 * depending on offset), it can specify a merge_bvec_fn in the
+	 * queue to get further control
+	 */
+	if (q->merge_bvec_fn) {
+		/*
+		 * merge_bvec_fn() returns number of bytes it can accept
+		 * at this offset
+		 */
+		if (q->merge_bvec_fn(q, bio, bvec) < len) {
+			bvec->bv_page = NULL;
+			bvec->bv_len = 0;
+			bvec->bv_offset = 0;
+			return 0;
+		}
+	}
+
+	/* If we may be able to merge these biovecs, force a recount */
+	if (bio->bi_vcnt && (BIOVEC_PHYS_MERGEABLE(bvec-1, bvec) ||
+	    BIOVEC_VIRT_MERGEABLE(bvec-1, bvec)))
+		bio->bi_flags &= ~(1 << BIO_SEG_VALID);
+
+	bio->bi_vcnt++;
+	bio->bi_phys_segments++;
+	bio->bi_hw_segments++;
+	bio->bi_size += len;
+	return len;
+}
+
+/**
+ *	bio_add_page	-	attempt to add page to bio
+ *	@bio: destination bio
+ *	@page: page to add
+ *	@len: vec entry length
+ *	@offset: vec entry offset
+ *
+ *	Attempt to add a page to the bio_vec maplist. This can fail for a
+ *	number of reasons, such as the bio being full or target block
+ *	device limitations. The target block device must allow bio's
+ *      smaller than PAGE_SIZE, so it is always possible to add a single
+ *      page to an empty bio.
+ */
+int bio_add_page(struct bio *bio, struct page *page, unsigned int len,
+		 unsigned int offset)
+{
+	return __bio_add_page(bdev_get_queue(bio->bi_bdev), bio, page,
+			      len, offset);
+}
+
+struct bio_map_data {
+	struct bio_vec *iovecs;
+	void __user *userptr;
+};
+
+static void bio_set_map_data(struct bio_map_data *bmd, struct bio *bio)
+{
+	memcpy(bmd->iovecs, bio->bi_io_vec, sizeof(struct bio_vec) * bio->bi_vcnt);
+	bio->bi_private = bmd;
+}
+
+static void bio_free_map_data(struct bio_map_data *bmd)
+{
+	kfree(bmd->iovecs);
+	kfree(bmd);
+}
 
 
 void bio_endio(struct bio *bio, unsigned int bytes_done, int error)

@@ -314,7 +314,19 @@ struct block_device *bdget(dev_t dev)
 
 EXPORT_SYMBOL(bdget);
 
-
+long nr_blockdev_pages(void)
+{
+	struct list_head *p;
+	long ret = 0;
+	spin_lock(&bdev_lock);
+	list_for_each(p, &all_bdevs) {
+		struct block_device *bdev;
+		bdev = list_entry(p, struct block_device, bd_list);
+		ret += bdev->bd_inode->i_mapping->nrpages;
+	}
+	spin_unlock(&bdev_lock);
+	return ret;
+}
 
 void bdput(struct block_device *bdev)
 {

@@ -37,6 +37,69 @@ loff_t generic_file_llseek(struct file *file, loff_t offset, int origin)
 	return retval;
 }
 
+EXPORT_SYMBOL(generic_file_llseek);
+
+loff_t no_llseek(struct file *file, loff_t offset, int origin)
+{
+	return -ESPIPE;
+}
+EXPORT_SYMBOL(no_llseek);
+
+loff_t default_llseek(struct file *file, loff_t offset, int origin)
+{
+	long long retval;
+
+	lock_kernel();
+	switch (origin) {
+		case 2:
+			offset += i_size_read(file->f_dentry->d_inode);
+			break;
+		case 1:
+			offset += file->f_pos;
+	}
+	retval = -EINVAL;
+	if (offset >= 0) {
+		if (offset != file->f_pos) {
+			file->f_pos = offset;
+			file->f_version = 0;
+		}
+		retval = offset;
+	}
+	unlock_kernel();
+	return retval;
+}
+EXPORT_SYMBOL(default_llseek);
+
+loff_t vfs_llseek(struct file *file, loff_t offset, int origin)
+{
+	loff_t (*fn)(struct file *, loff_t, int);
+
+	fn = no_llseek;
+	if (file->f_mode & FMODE_LSEEK) {
+		fn = default_llseek;
+		if (file->f_op && file->f_op->llseek)
+			fn = file->f_op->llseek;
+	}
+	return fn(file, offset, origin);
+}
+EXPORT_SYMBOL(vfs_llseek);
+
+asmlinkage off_t sys_lseek(unsigned int fd, off_t offset, unsigned int origin)
+{
+	panic("in sys_lseek");
+	return 0;
+}
+
+#ifdef __ARCH_WANT_SYS_LLSEEK
+asmlinkage long sys_llseek(unsigned int fd, unsigned long offset_high,
+			   unsigned long offset_low, loff_t __user * result,
+			   unsigned int origin)
+{
+	panic("in sys_llseek");
+	return 0;
+}
+#endif
+
 int rw_verify_area(int read_write, struct file *file, loff_t *ppos, size_t count)
 {
 	struct inode *inode;

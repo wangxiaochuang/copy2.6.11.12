@@ -542,7 +542,27 @@ struct dentry * d_alloc_anon(struct inode *inode)
 
 struct dentry *d_splice_alias(struct inode *inode, struct dentry *dentry)
 {
-	return NULL;
+	struct dentry *new = NULL;
+	if (inode) {
+		spin_lock(&dcache_lock);
+		new = __d_find_alias(inode, 1);
+		if (new) {
+			BUG_ON(!(new->d_flags & DCACHE_DISCONNECTED));
+			spin_unlock(&dcache_lock);
+			security_d_instantiate(new, inode);
+			d_rehash(dentry);
+			d_move(new, dentry);
+			iput(inode);
+		} else {
+			list_add(&dentry->d_alias, &inode->i_dentry);
+			dentry->d_inode = inode;
+			spin_unlock(&dcache_lock);
+			security_d_instantiate(dentry, inode);
+			d_rehash(dentry);
+		}
+	} else
+		d_add(dentry, inode);
+	return new;
 }
 
 struct dentry * d_lookup(struct dentry * parent, struct qstr * name)
@@ -670,6 +690,89 @@ void d_rehash(struct dentry * entry)
 	spin_lock(&entry->d_lock);
 	__d_rehash(entry, list);
 	spin_unlock(&entry->d_lock);
+	spin_unlock(&dcache_lock);
+}
+
+#define do_switch(x,y) do { \
+	__typeof__ (x) __tmp = x; \
+	x = y; y = __tmp; } while (0)
+
+static void switch_names(struct dentry *dentry, struct dentry *target)
+{
+	if (dname_external(target)) {
+		if (dname_external(dentry)) {
+			do_switch(target->d_name.name, dentry->d_name.name);
+		} else {
+			dentry->d_name.name = target->d_name.name;
+			target->d_name.name = target->d_iname;
+		}
+	} else {
+		if (dname_external(dentry)) {
+			memcpy(dentry->d_iname, target->d_name.name,
+					target->d_name.len + 1);
+			target->d_name.name = dentry->d_name.name;
+			dentry->d_name.name = dentry->d_iname;
+		} else {
+			memcpy(dentry->d_iname, target->d_name.name,
+					target->d_name.len + 1);
+		}
+	}
+}
+
+void d_move(struct dentry * dentry, struct dentry * target)
+{
+	struct hlist_head *list;
+
+	if (!dentry->d_inode)
+		printk(KERN_WARNING "VFS: moving negative dcache entry\n");
+
+	spin_lock(&dcache_lock);
+	write_seqlock(&rename_lock);
+	if (target < dentry) {
+		spin_lock(&target->d_lock);
+		spin_lock(&dentry->d_lock);
+	} else {
+		spin_lock(&dentry->d_lock);
+		spin_lock(&target->d_lock);
+	}
+
+	/* Move the dentry to the target hash queue, if on different bucket */
+	if (dentry->d_flags & DCACHE_UNHASHED)
+		goto already_unhashed;
+
+	hlist_del_rcu(&dentry->d_hash);
+
+already_unhashed:
+	list = d_hash(target->d_parent, target->d_name.hash);
+	__d_rehash(dentry, list);
+
+	/* Unhash the target: dput() will then get rid of it */
+	__d_drop(target);
+
+	list_del(&dentry->d_child);
+	list_del(&target->d_child);
+
+	/* Switch the names.. */
+	switch_names(dentry, target);
+	do_switch(dentry->d_name.len, target->d_name.len);
+	do_switch(dentry->d_name.hash, target->d_name.hash);
+
+	/* ... and switch the parents */
+	if (IS_ROOT(dentry)) {
+		dentry->d_parent = target->d_parent;
+		target->d_parent = target;
+		INIT_LIST_HEAD(&target->d_child);
+	} else {
+		do_switch(dentry->d_parent, target->d_parent);
+
+		/* And add them back to the (new) parent lists */
+		list_add(&target->d_child, &target->d_parent->d_subdirs);
+	}
+
+	list_add(&dentry->d_child, &dentry->d_parent->d_subdirs);
+	spin_unlock(&target->d_lock);
+	spin_unlock(&dentry->d_lock);
+	write_sequnlock(&rename_lock);
 	spin_unlock(&dcache_lock);
 }
 

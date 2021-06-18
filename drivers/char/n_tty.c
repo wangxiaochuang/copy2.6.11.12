@@ -51,3 +51,9 @@ struct tty_ldisc tty_ldisc_N_TTY = {
 //	n_tty_write_wakeup	/* write_wakeup */
 	NULL
 };
+
+int is_ignored(int sig)
+{
+	return (sigismember(&current->blocked, sig) ||
+	        current->sighand->action[sig-1].sa.sa_handler == SIG_IGN);
+}

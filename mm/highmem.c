@@ -185,6 +185,42 @@ void fastcall kunmap_high(struct page *page)
 
 EXPORT_SYMBOL(kunmap_high);
 
+#define POOL_SIZE	64
+
+static __init int init_emergency_pool(void)
+{
+	struct sysinfo i;
+	si_meminfo(&i);
+	si_swapinfo(&i);
+        
+	if (!i.totalhigh)
+		return 0;
+
+	page_pool = mempool_create(POOL_SIZE, page_pool_alloc, page_pool_free, NULL);
+	if (!page_pool)
+		BUG();
+	printk("highmem bounce pool size: %d pages\n", POOL_SIZE);
+
+	return 0;
+}
+
+__initcall(init_emergency_pool);
+
+/*
+ * highmem version, map in to vec
+ */
+static void bounce_copy_vec(struct bio_vec *to, unsigned char *vfrom)
+{
+	unsigned long flags;
+	unsigned char *vto;
+
+	local_irq_save(flags);
+	vto = kmap_atomic(to->bv_page, KM_BOUNCE_READ);
+	memcpy(vto + to->bv_offset, vfrom, to->bv_len);
+	kunmap_atomic(vto, KM_BOUNCE_READ);
+	local_irq_restore(flags);
+}
+
 #else /* CONFIG_HIGHMEM */
 #endif
 
@@ -202,12 +238,53 @@ int init_emergency_isa_pool(void)
 
 static void copy_to_high_bio_irq(struct bio *to, struct bio *from)
 {
-	panic("in copy_to_high_bio_irq");
+	unsigned char *vfrom;
+	struct bio_vec *tovec, *fromvec;
+	int i;
+
+	__bio_for_each_segment(tovec, to, i, 0) {
+		fromvec = from->bi_io_vec + i;
+
+		/*
+		 * not bounced
+		 */
+		if (tovec->bv_page == fromvec->bv_page)
+			continue;
+
+		/*
+		 * fromvec->bv_offset and fromvec->bv_len might have been
+		 * modified by the block layer, so use the original copy,
+		 * bounce_copy_vec already uses tovec->bv_len
+		 */
+		vfrom = page_address(fromvec->bv_page) + tovec->bv_offset;
+
+		flush_dcache_page(tovec->bv_page);
+		bounce_copy_vec(tovec, vfrom);
+	}
 }
 
 static void bounce_end_io(struct bio *bio, mempool_t *pool, int err)
 {
-	panic("in bounce_end_io");
+	struct bio *bio_orig = bio->bi_private;
+	struct bio_vec *bvec, *org_vec;
+	int i;
+
+	if (test_bit(BIO_EOPNOTSUPP, &bio->bi_flags))
+		set_bit(BIO_EOPNOTSUPP, &bio_orig->bi_flags);
+
+	/*
+	 * free up bounce indirect pages used
+	 */
+	__bio_for_each_segment(bvec, bio, i, 0) {
+		org_vec = bio_orig->bi_io_vec + i;
+		if (bvec->bv_page == org_vec->bv_page)
+			continue;
+
+		mempool_free(bvec->bv_page, pool);	
+	}
+
+	bio_endio(bio_orig, bio_orig->bi_size, err);
+	bio_put(bio);
 }
 
 static int bounce_end_io_write(struct bio *bio, unsigned int bytes_done,int err)
@@ -224,12 +301,20 @@ static int bounce_end_io_write_isa(struct bio *bio, unsigned int bytes_done, int
 
 static void __bounce_end_io_read(struct bio *bio, mempool_t *pool, int err)
 {
-	panic("in __bounce_end_io_read");
+	struct bio *bio_orig = bio->bi_private;
+
+	if (test_bit(BIO_UPTODATE, &bio->bi_flags))
+		copy_to_high_bio_irq(bio_orig, bio);
+
+	bounce_end_io(bio, pool, err);
 }
 
 static int bounce_end_io_read(struct bio *bio, unsigned int bytes_done, int err)
 {
-	panic("in bounce_end_io_read");
+	if (bio->bi_size)
+		return 1;
+
+	__bounce_end_io_read(bio, page_pool, err);
 	return 0;
 }
 

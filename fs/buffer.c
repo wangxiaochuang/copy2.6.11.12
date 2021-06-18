@@ -326,6 +326,29 @@ int inode_has_buffers(struct inode *inode)
 	return !list_empty(&inode->i_data.private_list);
 }
 
+
+
+void mark_buffer_dirty_inode(struct buffer_head *bh, struct inode *inode)
+{
+	struct address_space *mapping = inode->i_mapping;
+	struct address_space *buffer_mapping = bh->b_page->mapping;
+
+	mark_buffer_dirty(bh);
+	if (!mapping->assoc_mapping) {
+		mapping->assoc_mapping = buffer_mapping;
+	} else {
+		if (mapping->assoc_mapping != buffer_mapping)
+			BUG();
+	}
+	if (list_empty(&bh->b_assoc_buffers)) {
+		spin_lock(&buffer_mapping->private_lock);
+		list_move_tail(&bh->b_assoc_buffers,
+				&mapping->private_list);
+		spin_unlock(&buffer_mapping->private_lock);
+	}
+}
+EXPORT_SYMBOL(mark_buffer_dirty_inode);
+
 int __set_page_dirty_buffers(struct page *page)
 {
 	struct address_space * const mapping = page->mapping;
