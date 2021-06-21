@@ -70,6 +70,75 @@ static int tty_fasync(int fd, struct file * filp, int on);
 extern void rs_360_init(void);
 static void release_mem(struct tty_struct *tty, int idx);
 
+
+static struct tty_struct *alloc_tty_struct(void)
+{
+	struct tty_struct *tty;
+
+	tty = kmalloc(sizeof(struct tty_struct), GFP_KERNEL);
+	if (tty)
+		memset(tty, 0, sizeof(struct tty_struct));
+	return tty;
+}
+
+static inline void free_tty_struct(struct tty_struct *tty)
+{
+	kfree(tty->write_buf);
+	kfree(tty);
+}
+
+#define TTY_NUMBER(tty) ((tty)->index + (tty)->driver->name_base)
+
+char *tty_name(struct tty_struct *tty, char *buf)
+{
+	if (!tty) /* Hmm.  NULL pointer.  That's fun. */
+		strcpy(buf, "NULL tty");
+	else
+		strcpy(buf, tty->name);
+	return buf;
+}
+
+EXPORT_SYMBOL(tty_name);
+
+inline int tty_paranoia_check(struct tty_struct *tty, struct inode *inode,
+			      const char *routine)
+{
+	panic("in tty_paranoia_check");
+	return 0;
+}
+
+static int check_tty_count(struct tty_struct *tty, const char *routine)
+{
+#ifdef CHECK_TTY_COUNT
+	struct list_head *p;
+	int count = 0;
+	
+	file_list_lock();
+	list_for_each(p, &tty->tty_files) {
+		count++;
+	}
+	file_list_unlock();
+	if (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
+	    tty->driver->subtype == PTY_TYPE_SLAVE &&
+	    tty->link && tty->link->count)
+		count++;
+	if (tty->count != count) {
+		printk(KERN_WARNING "Warning: dev (%s) tty->count(%d) "
+				    "!= #fd's(%d) in %s\n",
+		       tty->name, tty->count, count, routine);
+		return count;
+       }	
+#endif
+	return 0;
+}
+
+static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
+{
+	down(&tty->termios_sem);
+	tty->termios->c_line = num;
+	up(&tty->termios_sem);
+}
+
 /*
  *	This guards the refcounted line discipline lists. The lock
  *	must be taken with irqs off because there are hangup path
@@ -106,10 +175,119 @@ int tty_register_ldisc(int disc, struct tty_ldisc *new_ldisc) {
 
 EXPORT_SYMBOL(tty_register_ldisc);
 
+struct tty_ldisc *tty_ldisc_get(int disc)
+{
+	panic("in tty_ldisc_get");
+	return NULL;
+}
+
+EXPORT_SYMBOL_GPL(tty_ldisc_get);
+
+void tty_ldisc_put(int disc)
+{
+	struct tty_ldisc *ld;
+	unsigned long flags;
+	
+	if (disc < N_TTY || disc >= NR_LDISCS)
+		BUG();
+		
+	spin_lock_irqsave(&tty_ldisc_lock, flags);
+	ld = &tty_ldiscs[disc];
+	if(ld->refcount == 0)
+		BUG();
+	ld->refcount --;
+	module_put(ld->owner);
+	spin_unlock_irqrestore(&tty_ldisc_lock, flags);
+}
+	
+EXPORT_SYMBOL_GPL(tty_ldisc_put);
+
+static void tty_ldisc_assign(struct tty_struct *tty, struct tty_ldisc *ld)
+{
+	tty->ldisc = *ld;
+	tty->ldisc.refcount = 0;
+}
+
+static int tty_ldisc_try(struct tty_struct *tty)
+{
+	unsigned long flags;
+	struct tty_ldisc *ld;
+	int ret = 0;
+	
+	spin_lock_irqsave(&tty_ldisc_lock, flags);
+	ld = &tty->ldisc;
+	if(test_bit(TTY_LDISC, &tty->flags))
+	{
+		ld->refcount++;
+		ret = 1;
+	}
+	spin_unlock_irqrestore(&tty_ldisc_lock, flags);
+	return ret;
+}
+
+struct tty_ldisc *tty_ldisc_ref_wait(struct tty_struct *tty)
+{
+	/* wait_event is a macro */
+	wait_event(tty_ldisc_wait, tty_ldisc_try(tty));
+	if(tty->ldisc.refcount == 0)
+		printk(KERN_ERR "tty_ldisc_ref_wait\n");
+	return &tty->ldisc;
+}
+
+EXPORT_SYMBOL_GPL(tty_ldisc_ref_wait);
+
+struct tty_ldisc *tty_ldisc_ref(struct tty_struct *tty)
+{
+	if(tty_ldisc_try(tty))
+		return &tty->ldisc;
+	return NULL;
+}
+
+EXPORT_SYMBOL_GPL(tty_ldisc_ref);
+
+void tty_ldisc_deref(struct tty_ldisc *ld)
+{
+	unsigned long flags;
+
+	if(ld == NULL)
+		BUG();
+		
+	spin_lock_irqsave(&tty_ldisc_lock, flags);
+	if(ld->refcount == 0)
+		printk(KERN_ERR "tty_ldisc_deref: no references.\n");
+	else
+		ld->refcount--;
+	if(ld->refcount == 0)
+		wake_up(&tty_ldisc_wait);
+	spin_unlock_irqrestore(&tty_ldisc_lock, flags);
+}
+
+EXPORT_SYMBOL_GPL(tty_ldisc_deref);
+
+static void tty_ldisc_enable(struct tty_struct *tty)
+{
+	set_bit(TTY_LDISC, &tty->flags);
+	wake_up(&tty_ldisc_wait);
+}
+
+static int tty_set_ldisc(struct tty_struct *tty, int ldisc)
+{
+	panic("in tty_set_ldisc");
+	return 0;
+}
+
 static struct tty_driver *get_tty_driver(dev_t device, int *index)
 {
-    panic("in get_tty_driver");
-    return NULL;
+    struct tty_driver *p;
+
+	list_for_each_entry(p, &tty_drivers, tty_drivers) {
+		dev_t base = MKDEV(p->major, p->minor_start);
+		if (device < base || device >= base + p->num)
+			continue;
+		*index = device - base;
+		return p;
+	}
+	return NULL;
 }
 
 int tty_check_change(struct tty_struct * tty)
@@ -203,6 +381,7 @@ void tty_ldisc_flush(struct tty_struct *tty)
 }
 
 EXPORT_SYMBOL_GPL(tty_ldisc_flush);
+
 
 static void do_tty_hangup(void *data)
 {
@@ -309,8 +488,186 @@ static inline void tty_line_name(struct tty_driver *driver, int index, char *p)
 static int init_dev(struct tty_driver *driver, int idx,
 	struct tty_struct **ret_tty)
 {
-    panic("in init_dev");
-    return 0;
+    struct tty_struct *tty, *o_tty;
+	struct termios *tp, **tp_loc, *o_tp, **o_tp_loc;
+	struct termios *ltp, **ltp_loc, *o_ltp, **o_ltp_loc;
+	int retval = 0;
+
+	if (driver->flags & TTY_DRIVER_DEVPTS_MEM) {
+		tty = devpts_get_tty(idx);
+		if (tty && driver->subtype == PTY_TYPE_MASTER)
+			tty = tty->link;
+	} else {
+		tty = driver->ttys[idx];
+	}
+	if (tty) goto fast_track;
+
+	if (!try_module_get(driver->owner)) {
+		retval = -ENODEV;
+		goto end_init;
+	}
+
+	o_tty = NULL;
+	tp = o_tp = NULL;
+	ltp = o_ltp = NULL;
+
+	tty = alloc_tty_struct();
+	if (!tty)
+		goto fail_no_mem;
+	initialize_tty_struct(tty);
+	tty->driver = driver;
+	tty->index = idx;
+	tty_line_name(driver, idx, tty->name);
+
+	if (driver->flags & TTY_DRIVER_DEVPTS_MEM) {
+		tp_loc = &tty->termios;
+		ltp_loc = &tty->termios_locked;
+	} else {
+		tp_loc = &driver->termios[idx];
+		ltp_loc = &driver->termios_locked[idx];
+	}
+
+	if (!*tp_loc) {
+		tp = (struct termios *) kmalloc(sizeof(struct termios),
+						GFP_KERNEL);
+		if (!tp)
+			goto free_mem_out;
+		*tp = driver->init_termios;
+	}
+
+	if (!*ltp_loc) {
+		ltp = (struct termios *) kmalloc(sizeof(struct termios),
+						 GFP_KERNEL);
+		if (!ltp)
+			goto free_mem_out;
+		memset(ltp, 0, sizeof(struct termios));
+	}
+
+	if (driver->type == TTY_DRIVER_TYPE_PTY) {
+		o_tty = alloc_tty_struct();
+		if (!o_tty)
+			goto free_mem_out;
+		initialize_tty_struct(o_tty);
+		o_tty->driver = driver->other;
+		o_tty->index = idx;
+		tty_line_name(driver->other, idx, o_tty->name);
+
+		if (driver->flags & TTY_DRIVER_DEVPTS_MEM) {
+			o_tp_loc = &o_tty->termios;
+			o_ltp_loc = &o_tty->termios_locked;
+		} else {
+			o_tp_loc = &driver->other->termios[idx];
+			o_ltp_loc = &driver->other->termios_locked[idx];
+		}
+
+		if (!*o_tp_loc) {
+			o_tp = (struct termios *)
+				kmalloc(sizeof(struct termios), GFP_KERNEL);
+			if (!o_tp)
+				goto free_mem_out;
+			*o_tp = driver->other->init_termios;
+		}
+
+		if (!*o_ltp_loc) {
+			o_ltp = (struct termios *)
+				kmalloc(sizeof(struct termios), GFP_KERNEL);
+			if (!o_ltp)
+				goto free_mem_out;
+			memset(o_ltp, 0, sizeof(struct termios));
+		}
+
+		if (!(driver->other->flags & TTY_DRIVER_DEVPTS_MEM)) {
+			driver->other->ttys[idx] = o_tty;
+		}
+		if (!*o_tp_loc)
+			*o_tp_loc = o_tp;
+		if (!*o_ltp_loc)
+			*o_ltp_loc = o_ltp;
+		o_tty->termios = *o_tp_loc;
+		o_tty->termios_locked = *o_ltp_loc;
+		driver->other->refcount++;
+		if (driver->subtype == PTY_TYPE_MASTER)
+			o_tty->count++;
+
+		/* Establish the links in both directions */
+		tty->link   = o_tty;
+		o_tty->link = tty;
+	}
+
+	if (!(driver->flags & TTY_DRIVER_DEVPTS_MEM)) {
+		driver->ttys[idx] = tty;
+	}
+
+	if (!*tp_loc)
+		*tp_loc = tp;
+	if (!*ltp_loc)
+		*ltp_loc = ltp;
+	tty->termios = *tp_loc;
+	tty->termios_locked = *ltp_loc;
+	driver->refcount++;
+	tty->count++;
+
+	if (tty->ldisc.open) {
+		retval = (tty->ldisc.open)(tty);
+		if (retval)
+			goto release_mem_out;
+	}
+	if (o_tty && o_tty->ldisc.open) {
+		retval = (o_tty->ldisc.open)(o_tty);
+		if (retval) {
+			if (tty->ldisc.close)
+				(tty->ldisc.close)(tty);
+			goto release_mem_out;
+		}
+		tty_ldisc_enable(o_tty);
+	}
+	tty_ldisc_enable(tty);
+	goto success;
+
+fast_track:
+	if (test_bit(TTY_CLOSING, &tty->flags)) {
+		retval = -EIO;
+		goto end_init;
+	}
+	if (driver->type == TTY_DRIVER_TYPE_PTY &&
+	    driver->subtype == PTY_TYPE_MASTER) {
+		if (tty->count) {
+			retval = -EIO;
+			goto end_init;
+		}
+		tty->link->count++;
+	}
+	tty->count++;
+	tty->driver = driver;
+
+	if(!test_bit(TTY_LDISC, &tty->flags))
+		printk(KERN_ERR "init_dev but no ldisc\n");
+success:
+	*ret_tty = tty;
+end_init:
+	return retval;
+
+free_mem_out:
+	if (o_tp)
+		kfree(o_tp);
+	if (o_tty)
+		free_tty_struct(o_tty);
+	if (ltp)
+		kfree(ltp);
+	if (tp)
+		kfree(tp);
+	free_tty_struct(tty);
+
+fail_no_mem:
+	module_put(driver->owner);
+	retval = -ENOMEM;
+	goto end_init;
+
+release_mem_out:
+	printk(KERN_INFO "init_dev: ldisc open failed, "
+			 "clearing slot %d\n", idx);
+	release_mem(tty, idx);
+	goto end_init;
 }
 
 static void release_mem(struct tty_struct *tty, int idx)
@@ -325,8 +682,109 @@ static void release_dev(struct file * filp)
 
 static int tty_open(struct inode * inode, struct file * filp)
 {
-    panic("in tty_open");
-    return 0;
+    struct tty_struct *tty;
+	int noctty, retval;
+	struct tty_driver *driver;
+	int index;
+	dev_t device = inode->i_rdev;
+	unsigned short saved_flags = filp->f_flags;
+
+	nonseekable_open(inode, filp);
+retry_open:
+	noctty = filp->f_flags & O_NOCTTY;
+	index = -1;
+	retval = 0;
+
+	down(&tty_sem);
+
+	if (device == MKDEV(TTYAUX_MAJOR, 0)) {
+		if (!current->signal->tty) {
+			up(&tty_sem);
+			return -ENXIO;
+		}
+		driver = current->signal->tty->driver;
+		index = current->signal->tty->index;
+		filp->f_flags |= O_NONBLOCK;
+		goto got_driver;
+	}
+#ifdef CONFIG_VT
+	if (device == MKDEV(TTY_MAJOR,0)) {
+		extern int fg_console;
+		extern struct tty_driver *console_driver;
+		driver = console_driver;
+		index = fg_console;
+		noctty = 1;
+		goto got_driver;
+	}
+#endif
+	if (device == MKDEV(TTYAUX_MAJOR, 1)) {
+		driver = console_device(&index);
+		if (driver) {
+			filp->f_flags |= O_NONBLOCK;
+			noctty = 1;
+			goto got_driver;
+		}
+		up(&tty_sem);
+		return -ENODEV;
+	}
+
+	driver = get_tty_driver(device, &index);
+	if (!driver) {
+		up(&tty_sem);
+		return -ENODEV;
+	}
+got_driver:
+	retval = init_dev(driver, index, &tty);
+	up(&tty_sem);
+	if (retval)
+		return retval;
+	
+	filp->private_data = tty;
+	file_move(filp, &tty->tty_files);
+	check_tty_count(tty, "tty_open");
+	if (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
+	    tty->driver->subtype == PTY_TYPE_MASTER)
+		noctty = 1;
+#ifdef TTY_DEBUG_HANGUP
+	printk(KERN_DEBUG "opening %s...", tty->name);
+#endif
+	if (!retval) {
+		if (tty->driver->open)
+			retval = tty->driver->open(tty, filp);
+		else
+			retval = -ENODEV;
+	}
+	filp->f_flags = saved_flags;
+	if (!retval && test_bit(TTY_EXCLUSIVE, &tty->flags) && !capable(CAP_SYS_ADMIN))
+		retval = -EBUSY;
+
+	if (retval) {
+#ifdef TTY_DEBUG_HANGUP
+		printk(KERN_DEBUG "error %d in opening %s...", retval,
+		       tty->name);
+#endif
+		release_dev(filp);
+		if (retval != -ERESTARTSYS)
+			return retval;
+		if (signal_pending(current))
+			return retval;
+		schedule();
+		if (filp->f_op == &hung_up_tty_fops)
+			filp->f_op = &tty_fops;
+		goto retry_open;
+	}
+	if (!noctty &&
+		current->signal->leader &&
+		!current->signal->tty &&
+		tty->session == 0) {
+			task_lock(current);
+		current->signal->tty = tty;
+		task_unlock(current);
+		current->signal->tty_old_pgrp = 0;
+		tty->session = current->signal->session;
+		tty->pgrp = process_group(current);
+	}
+	return 0;
 }
 
 static int tty_release(struct inode * inode, struct file * filp)
@@ -546,7 +1004,23 @@ EXPORT_SYMBOL(tty_flip_buffer_push);
 
 static void initialize_tty_struct(struct tty_struct *tty)
 {
-    panic("in initialize_tty_struct");
+    memset(tty, 0, sizeof(struct tty_struct));
+	tty->magic = TTY_MAGIC;
+	tty_ldisc_assign(tty, tty_ldisc_get(N_TTY));
+	tty->pgrp = -1;
+	tty->flip.char_buf_ptr = tty->flip.char_buf;
+	tty->flip.flag_buf_ptr = tty->flip.flag_buf;
+	INIT_WORK(&tty->flip.work, flush_to_ldisc, tty);
+	init_MUTEX(&tty->flip.pty_sem);
+	init_MUTEX(&tty->termios_sem);
+	init_waitqueue_head(&tty->write_wait);
+	init_waitqueue_head(&tty->read_wait);
+	INIT_WORK(&tty->hangup_work, do_tty_hangup, tty);
+	sema_init(&tty->atomic_read, 1);
+	sema_init(&tty->atomic_write, 1);
+	spin_lock_init(&tty->read_lock);
+	INIT_LIST_HEAD(&tty->tty_files);
+	INIT_WORK(&tty->SAK_work, NULL, NULL);
 }
 
 static void tty_default_put_char(struct tty_struct *tty, unsigned char ch)
@@ -665,7 +1139,9 @@ void __init console_init(void) {
     }
 }
 
-
+#ifdef CONFIG_VT
+extern int vty_init(void);
+#endif
 
 static int __init tty_class_init(void)
 {
@@ -677,16 +1153,25 @@ static int __init tty_class_init(void)
 
 postcore_initcall(tty_class_init);
 
-
-
-
-
-
 static struct cdev tty_cdev, console_cdev;
 
 static int __init tty_init(void)
 {
     cdev_init(&tty_cdev, &tty_fops);
+	if (cdev_add(&tty_cdev, MKDEV(TTYAUX_MAJOR, 0), 1) ||
+		register_chrdev_region(MKDEV(TTYAUX_MAJOR, 0), 1, "/dev/tty") < 0)
+		panic("Couldn't register /dev/tty driver\n");
+	devfs_mk_cdev(MKDEV(TTYAUX_MAJOR, 0), S_IFCHR|S_IRUGO|S_IWUGO, "tty");
+	class_simple_device_add(tty_class, MKDEV(TTYAUX_MAJOR, 0), NULL, "tty");
+
+	cdev_init(&console_cdev, &console_fops);
+	if (cdev_add(&console_cdev, MKDEV(TTYAUX_MAJOR, 1), 1) ||
+	    register_chrdev_region(MKDEV(TTYAUX_MAJOR, 1), 1, "/dev/console") < 0)
+		panic("Couldn't register /dev/console driver\n");
+	devfs_mk_cdev(MKDEV(TTYAUX_MAJOR, 1), S_IFCHR|S_IRUSR|S_IWUSR, "console");
+	class_simple_device_add(tty_class, MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
+
+	// @todo
     return 0;
 }
 

@@ -304,6 +304,42 @@ void release_console_sem(void)
 }
 EXPORT_SYMBOL(release_console_sem);
 
+void __sched console_conditional_schedule(void)
+{
+	if (console_may_schedule)
+		cond_resched();
+}
+EXPORT_SYMBOL(console_conditional_schedule);
+
+void console_print(const char *s)
+{
+	printk(KERN_EMERG "%s", s);
+}
+EXPORT_SYMBOL(console_print);
+
+void console_unblank(void)
+{
+	panic("in console_unblank");
+}
+
+EXPORT_SYMBOL(console_unblank);
+
+struct tty_driver *console_device(int *index)
+{
+	struct console *c;
+	struct tty_driver *driver = NULL;
+
+	acquire_console_sem();
+	for (c = console_drivers; c != NULL; c = c->next) {
+		if (!c->device)
+			continue;
+		driver = c->device(c, index);
+		if (driver)
+			break;
+	}
+	release_console_sem();
+	return driver;
+}
 /*
  * The console driver calls this routine during kernel initialization
  * to register the console printing procedure with printk() and to

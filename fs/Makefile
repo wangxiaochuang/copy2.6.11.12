@@ -48,7 +48,7 @@ obj-$(CONFIG_DNOTIFY)		+= dnotify.o
 obj-$(CONFIG_PROC_FS)		+= proc/
 obj-y				+= partitions/
 obj-$(CONFIG_SYSFS)		+= sysfs/
-# obj-y				+= devpts/
+obj-y				+= devpts/
 # 
 # obj-$(CONFIG_PROFILING)		+= dcookies.o
 #  

@@ -45,3 +45,19 @@ struct file_operations bin_fops = {
 	.open		= open,
 	.release	= release,
 };
+
+int sysfs_create_bin_file(struct kobject * kobj, struct bin_attribute * attr)
+{
+	BUG_ON(!kobj || !kobj->dentry || !attr);
+
+	return sysfs_add_file(kobj->dentry, &attr->attr, SYSFS_KOBJ_BIN_ATTR);
+}
+
+int sysfs_remove_bin_file(struct kobject * kobj, struct bin_attribute * attr)
+{
+	sysfs_hash_and_remove(kobj->dentry,attr->attr.name);
+	return 0;
+}
+
+EXPORT_SYMBOL_GPL(sysfs_create_bin_file);
+EXPORT_SYMBOL_GPL(sysfs_remove_bin_file);

@@ -762,7 +762,31 @@ struct dentry * lookup_hash(struct qstr *name, struct dentry * base)
 	return __lookup_hash(name, base, NULL);
 }
 
+/* SMP-safe */
+struct dentry * lookup_one_len(const char * name, struct dentry * base, int len)
+{
+	unsigned long hash;
+	struct qstr this;
+	unsigned int c;
 
+	this.name = name;
+	this.len = len;
+	if (!len)
+		goto access;
+
+	hash = init_name_hash();
+	while (len--) {
+		c = *(const unsigned char *)name++;
+		if (c == '/' || c == '\0')
+			goto access;
+		hash = partial_name_hash(c, hash);
+	}
+	this.hash = end_name_hash(hash);
+
+	return lookup_hash(&this, base);
+access:
+	return ERR_PTR(-EACCES);
+}
 
 int fastcall __user_walk(const char __user *name, unsigned flags, struct nameidata *nd)
 {
