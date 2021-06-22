@@ -167,8 +167,37 @@ int alloc_chrdev_region(dev_t *dev, unsigned baseminor, unsigned count,
 int register_chrdev(unsigned int major, const char *name,
 		    struct file_operations *fops)
 {
-	panic("in register_chrdev");
-	return 0;
+	struct char_device_struct *cd;
+	struct cdev *cdev;
+	char *s;
+	int err = -ENOMEM;
+
+	cd = __register_chrdev_region(major, 0, 256, name);
+	if (IS_ERR(cd))
+		return PTR_ERR(cd);
+	
+	cdev = cdev_alloc();
+	if (!cdev)
+		goto out2;
+	
+	cdev->owner = fops->owner;
+	cdev->ops = fops;
+	kobject_set_name(&cdev->kobj, "%s", name);
+	for (s = strchr(kobject_name(&cdev->kobj),'/'); s; s = strchr(s, '/'))
+		*s = '!';
+	
+	err = cdev_add(cdev, MKDEV(cd->major, 0), 256);
+	if (err)
+		goto out;
+
+	cd->cdev = cdev;
+
+	return major ? 0 : cd->major;
+out:
+	kobject_put(&cdev->kobj);
+out2:
+	kfree(__unregister_chrdev_region(cd->major, 0, 256));
+	return err;
 }
 
 void unregister_chrdev_region(dev_t from, unsigned count)

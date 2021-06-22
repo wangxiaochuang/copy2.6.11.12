@@ -152,6 +152,9 @@ enum {
 #define DO_UPDATE_VC(vc)	CON_IS_VISIBLE(vc)
 #endif
 
+static int pm_con_request(struct pm_dev *dev, pm_request_t rqst, void *data);
+static struct pm_dev *pm_con;
+
 static inline unsigned short *screenpos(struct vc_data *vc, int offset, int viewed)
 {
 	unsigned short *p;
@@ -163,6 +166,17 @@ static inline unsigned short *screenpos(struct vc_data *vc, int offset, int view
 	else
 		p = vc->vc_sw->con_screen_pos(vc, offset);
 	return p;
+}
+
+static inline void scrolldelta(int lines)
+{
+	scrollback_delta += lines;
+	schedule_console_callback();
+}
+
+void schedule_console_callback(void)
+{
+	schedule_work(&console_work);
 }
 
 static void scrup(int currcons, unsigned int t, unsigned int b, int nr)
@@ -382,6 +396,16 @@ void complement_pos(struct vc_data *vc, int offset)
 	}
 }
 
+static void insert_char(int currcons, unsigned int nr)
+{
+	panic("in insert_char");
+}
+
+static void delete_char(int currcons, unsigned int nr)
+{
+	panic("in delete_char");
+}
+
 static int softcursor_original;
 
 static void add_softcursor(struct vc_data *vc)
@@ -568,6 +592,22 @@ static void visual_init(int currcons, int init)
     screenbuf_size = vc_cons[currcons].d->vc_rows * vc_cons[currcons].d->vc_size_row;
 }
 
+int vc_allocate(unsigned int currcons)	/* return 0 on success */
+{
+	panic("in vc_allocate");
+	return 0;
+}
+
+inline int resize_screen(int currcons, int width, int height)
+{
+	/* Resizes the resolution of the display adapater */
+	int err = 0;
+
+	if (vcmode != KD_GRAPHICS && sw->con_resize)
+		err = sw->con_resize(vc_cons[currcons].d, width, height);
+	return err;
+}
+
 /*
  * Change # of rows and columns (0 means unchanged/the size of fg_console)
  * [this is to be used together with some user program
@@ -577,7 +617,13 @@ static void visual_init(int currcons, int init)
 #define VC_RESIZE_MAXROW (32767)
 int vc_resize(int currcons, unsigned int cols, unsigned int lines)
 {
+	panic("in vc_resize");
 	return 0;
+}
+
+void vc_disallocate(unsigned int currcons)
+{
+	panic("in vc_disallocate");
 }
 
 /*
@@ -643,6 +689,29 @@ static void gotoxy(struct vc_data *vc, int new_x, int new_y)
 		vc->vc_y = new_y;
 	vc->vc_pos = vc->vc_origin + vc->vc_y * vc->vc_size_row + (vc->vc_x<<1);
 	vc->vc_need_wrap = 0;
+}
+
+static void gotoxay(int currcons, int new_x, int new_y)
+{
+	gotoxy(vc_cons[currcons].d, new_x, decom ? (top+new_y) : new_y);
+}
+
+void scrollback(int lines)
+{
+	int currcons = fg_console;
+
+	if (!lines)
+		lines = vc_cons[currcons].d->vc_rows/2;
+	scrolldelta(-lines);
+}
+
+void scrollfront(int lines)
+{
+	int currcons = fg_console;
+
+	if (!lines)
+		lines = vc_cons[currcons].d->vc_rows/2;
+	scrolldelta(lines);
 }
 
 static void lf(int currcons)
@@ -737,6 +806,54 @@ static void csi_J(int currcons, int vpar)
 	need_wrap = 0;
 }
 
+static void csi_K(int currcons, int vpar)
+{
+	unsigned int count;
+	unsigned short * start;
+
+	switch (vpar) {
+		case 0:	/* erase from cursor to end of line */
+			count = vc_cons[currcons].d->vc_cols-x;
+			start = (unsigned short *) pos;
+			if (DO_UPDATE)
+				sw->con_clear(vc_cons[currcons].d, y, x, 1,
+					      vc_cons[currcons].d->vc_cols-x);
+			break;
+		case 1:	/* erase from start of line to cursor */
+			start = (unsigned short *) (pos - (x<<1));
+			count = x+1;
+			if (DO_UPDATE)
+				sw->con_clear(vc_cons[currcons].d, y, 0, 1,
+					      x + 1);
+			break;
+		case 2: /* erase whole line */
+			start = (unsigned short *) (pos - (x<<1));
+			count = vc_cons[currcons].d->vc_cols;
+			if (DO_UPDATE)
+				sw->con_clear(vc_cons[currcons].d, y, 0, 1,
+					      vc_cons[currcons].d->vc_cols);
+			break;
+		default:
+			return;
+	}
+	scr_memsetw(start, video_erase_char, 2 * count);
+	need_wrap = 0;
+}
+
+static void csi_X(int currcons, int vpar) /* erase the following vpar positions */
+{					  /* not vt100? */
+	int count;
+
+	if (!vpar)
+		vpar++;
+	count = (vpar > vc_cons[currcons].d->vc_cols-x) ? (vc_cons[currcons].d->vc_cols-x) : vpar;
+
+	scr_memsetw((unsigned short *) pos, video_erase_char, 2 * count);
+	if (DO_UPDATE)
+		sw->con_clear(vc_cons[currcons].d, y, x, 1, count);
+	need_wrap = 0;
+}
+
 static void default_attr(int currcons)
 {
 	intensity = 1;
@@ -744,6 +861,188 @@ static void default_attr(int currcons)
 	reverse = 0;
 	blink = 0;
 	color = def_color;
+}
+
+static void csi_m(int currcons)
+{
+	int i;
+
+	for (i=0;i<=npar;i++)
+		switch (par[i]) {
+			case 0:	/* all attributes off */
+				default_attr(currcons);
+				break;
+			case 1:
+				intensity = 2;
+				break;
+			case 2:
+				intensity = 0;
+				break;
+			case 4:
+				underline = 1;
+				break;
+			case 5:
+				blink = 1;
+				break;
+			case 7:
+				reverse = 1;
+				break;
+			case 10: /* ANSI X3.64-1979 (SCO-ish?)
+				  * Select primary font, don't display
+				  * control chars if defined, don't set
+				  * bit 8 on output.
+				  */
+				translate = set_translate(charset == 0
+						? G0_charset
+						: G1_charset,currcons);
+				disp_ctrl = 0;
+				toggle_meta = 0;
+				break;
+			case 11: /* ANSI X3.64-1979 (SCO-ish?)
+				  * Select first alternate font, lets
+				  * chars < 32 be displayed as ROM chars.
+				  */
+				translate = set_translate(IBMPC_MAP,currcons);
+				disp_ctrl = 1;
+				toggle_meta = 0;
+				break;
+			case 12: /* ANSI X3.64-1979 (SCO-ish?)
+				  * Select second alternate font, toggle
+				  * high bit before displaying as ROM char.
+				  */
+				translate = set_translate(IBMPC_MAP,currcons);
+				disp_ctrl = 1;
+				toggle_meta = 1;
+				break;
+			case 21:
+			case 22:
+				intensity = 1;
+				break;
+			case 24:
+				underline = 0;
+				break;
+			case 25:
+				blink = 0;
+				break;
+			case 27:
+				reverse = 0;
+				break;
+			case 38: /* ANSI X3.64-1979 (SCO-ish?)
+				  * Enables underscore, white foreground
+				  * with white underscore (Linux - use
+				  * default foreground).
+				  */
+				color = (def_color & 0x0f) | background;
+				underline = 1;
+				break;
+			case 39: /* ANSI X3.64-1979 (SCO-ish?)
+				  * Disable underline option.
+				  * Reset colour to default? It did this
+				  * before...
+				  */
+				color = (def_color & 0x0f) | background;
+				underline = 0;
+				break;
+			case 49:
+				color = (def_color & 0xf0) | foreground;
+				break;
+			default:
+				if (par[i] >= 30 && par[i] <= 37)
+					color = color_table[par[i]-30]
+						| background;
+				else if (par[i] >= 40 && par[i] <= 47)
+					color = (color_table[par[i]-40]<<4)
+						| foreground;
+				break;
+		}
+	update_attr(currcons);
+}
+
+static void respond_string(const char *p, struct tty_struct *tty)
+{
+	panic("in respond_string");
+}
+
+static void cursor_report(int currcons, struct tty_struct *tty)
+{
+	char buf[40];
+
+	sprintf(buf, "\033[%d;%dR", y + (decom ? top+1 : 1), x+1);
+	respond_string(buf, tty);
+}
+
+static inline void status_report(struct tty_struct *tty)
+{
+	respond_string("\033[0n", tty);	/* Terminal ok */
+}
+
+static inline void respond_ID(struct tty_struct * tty)
+{
+	respond_string(VT102ID, tty);
+}
+
+void mouse_report(struct tty_struct *tty, int butt, int mrx, int mry)
+{
+	char buf[8];
+
+	sprintf(buf, "\033[M%c%c%c", (char)(' ' + butt), (char)('!' + mrx),
+		(char)('!' + mry));
+	respond_string(buf, tty);
+}
+
+int mouse_reporting(void)
+{
+	int currcons = fg_console;
+
+	return report_mouse;
+}
+
+static void set_mode(int currcons, int on_off)
+{
+	panic("in set_mode");
+}
+
+static void setterm_command(int currcons)
+{
+	panic("in setterm_command");
+}
+
+static void csi_at(int currcons, unsigned int nr)
+{
+	if (nr > vc_cons[currcons].d->vc_cols - x)
+		nr = vc_cons[currcons].d->vc_cols - x;
+	else if (!nr)
+		nr = 1;
+	insert_char(currcons, nr);
+}
+
+static void csi_L(int currcons, unsigned int nr)
+{
+	if (nr > vc_cons[currcons].d->vc_rows - y)
+		nr = vc_cons[currcons].d->vc_rows - y;
+	else if (!nr)
+		nr = 1;
+	scrdown(currcons,y,bottom,nr);
+	need_wrap = 0;
+}
+
+static void csi_P(int currcons, unsigned int nr)
+{
+	if (nr > vc_cons[currcons].d->vc_cols - x)
+		nr = vc_cons[currcons].d->vc_cols - x;
+	else if (!nr)
+		nr = 1;
+	delete_char(currcons, nr);
+}
+
+static void csi_M(int currcons, unsigned int nr)
+{
+	if (nr > vc_cons[currcons].d->vc_rows - y)
+		nr = vc_cons[currcons].d->vc_rows - y;
+	else if (!nr)
+		nr=1;
+	scrup(currcons,y,bottom,nr);
+	need_wrap = 0;
 }
 
 /* console_sem is held (except via vc_init->reset_terminal */
@@ -839,6 +1138,20 @@ static void reset_terminal(int currcons, int do_clear)
 	    csi_J(currcons,2);
 }
 
+static void do_con_trol(struct tty_struct *tty, unsigned int currcons, int c)
+{
+	panic("in do_con_trol");
+}
+
+char con_buf[CON_BUF_SIZE];
+DECLARE_MUTEX(con_buf_sem);
+
+static int do_con_write(struct tty_struct *tty, const unsigned char *buf, int count)
+{
+	panic("in do_con_write");
+	return 0;
+}
+
 /*
  * This is the console switching callback.
  *
@@ -880,6 +1193,12 @@ static void console_callback(void *ignored)
 	}
 
 	release_console_sem();
+}
+
+void set_console(int nr)
+{
+	want_console = nr;
+	schedule_console_callback();
 }
 
 struct tty_driver *console_driver;
@@ -997,6 +1316,78 @@ struct console vt_console_driver = {
 };
 #endif
 
+int tioclinux(struct tty_struct *tty, unsigned long arg)
+{
+	panic("in tioclinux");
+	return 0;
+}
+
+static int con_write(struct tty_struct *tty, const unsigned char *buf, int count)
+{
+	int	retval;
+
+	retval = do_con_write(tty, buf, count);
+	con_flush_chars(tty);
+
+	return retval;
+}
+
+static void con_put_char(struct tty_struct *tty, unsigned char ch)
+{
+	if (in_interrupt())
+		return;	/* n_r3964 calls put_char() from interrupt context */
+	do_con_write(tty, &ch, 1);
+}
+
+static int con_write_room(struct tty_struct *tty)
+{
+	if (tty->stopped)
+		return 0;
+	return 4096;		/* No limit, really; we're not buffering */
+}
+
+static int con_chars_in_buffer(struct tty_struct *tty)
+{
+	return 0;		/* we're not buffering */
+}
+
+static void con_throttle(struct tty_struct *tty)
+{
+}
+
+static void con_unthrottle(struct tty_struct *tty)
+{
+	struct vt_struct *vt = tty->driver_data;
+
+	wake_up_interruptible(&vt->paste_wait);
+}
+
+static void con_stop(struct tty_struct *tty)
+{
+	panic("in con_stop");
+}
+
+static void con_start(struct tty_struct *tty)
+{
+	panic("in con_start");
+}
+
+static void con_flush_chars(struct tty_struct *tty)
+{
+	panic("in con_flush_chars");
+}
+
+static int con_open(struct tty_struct *tty, struct file *filp)
+{
+	panic("in con_open");
+	return 0;
+}
+
+static void con_close(struct tty_struct *tty, struct file *filp)
+{
+	panic("in con_close");
+}
+
 static void vc_init(unsigned int currcons, unsigned int rows,
 			unsigned int cols, int do_clear)
 {
@@ -1086,6 +1477,52 @@ static int __init con_init(void) {
 }
 
 console_initcall(con_init);
+
+static struct tty_operations con_ops = {
+	.open = con_open,
+	.close = con_close,
+	.write = con_write,
+	.write_room = con_write_room,
+	.put_char = con_put_char,
+	.flush_chars = con_flush_chars,
+	.chars_in_buffer = con_chars_in_buffer,
+	.ioctl = vt_ioctl,
+	.stop = con_stop,
+	.start = con_start,
+	.throttle = con_throttle,
+	.unthrottle = con_unthrottle,
+};
+
+int __init vty_init(void)
+{
+	vcs_init();
+
+	console_driver = alloc_tty_driver(MAX_NR_CONSOLES);
+	if (!console_driver)
+		panic("Couldn't allocate console driver\n");
+	console_driver->owner = THIS_MODULE;
+	console_driver->devfs_name = "vc/";
+	console_driver->name = "tty";
+	console_driver->name_base = 1;
+	console_driver->major = TTY_MAJOR;
+	console_driver->minor_start = 1;
+	console_driver->type = TTY_DRIVER_TYPE_CONSOLE;
+	console_driver->init_termios = tty_std_termios;
+	console_driver->flags = TTY_DRIVER_REAL_RAW | TTY_DRIVER_RESET_TERMIOS;
+	tty_set_operations(console_driver, &con_ops);
+	if (tty_register_driver(console_driver))
+		panic("Couldn't register console driver\n");
+		
+	kbd_init();
+	console_map_init();
+#ifdef CONFIG_PROM_CONSOLE
+	prom_con_init();
+#endif
+#ifdef CONFIG_MDA_CONSOLE
+	mda_console_init();
+#endif
+	return 0;
+}
 
 /*
  * This is called by a timer handler

@@ -42,6 +42,17 @@ extern struct tty_driver *console_driver;
 
 struct vt_struct *vt_cons[MAX_NR_CONSOLES];
 
+
+
+
+int vt_ioctl(struct tty_struct *tty, struct file * file,
+	     unsigned int cmd, unsigned long arg)
+{
+	panic("in vt_ioctl");
+	return 0;
+}
+
+
 /*
  * Sometimes we want to wait until a particular VT has been activated. We
  * do it in a very simple manner. Everybody waits on a single queue and

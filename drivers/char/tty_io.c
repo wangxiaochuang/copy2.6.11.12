@@ -43,6 +43,17 @@
 #define TTY_PARANOIA_CHECK 1
 #define CHECK_TTY_COUNT 1
 
+struct termios tty_std_termios = {	/* for the benefit of tty drivers  */
+	.c_iflag = ICRNL | IXON,
+	.c_oflag = OPOST | ONLCR,
+	.c_cflag = B38400 | CS8 | CREAD | HUPCL,
+	.c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK |
+		   ECHOCTL | ECHOKE | IEXTEN,
+	.c_cc = INIT_C_CC
+};
+
+EXPORT_SYMBOL(tty_std_termios);
+
 /* This list gets poked at by procfs and various bits of boot up code. This
    could do with some rationalisation such as pulling the tty proc function
    into this file */
@@ -53,6 +64,14 @@ LIST_HEAD(tty_drivers);			/* linked list of tty drivers */
 /* Semaphore to protect creating and releasing a tty. This is shared with
    vt.c for deeply disgusting hack reasons */
 DECLARE_MUTEX(tty_sem);
+
+#ifdef CONFIG_UNIX98_PTYS
+extern struct tty_driver *ptm_driver;	/* Unix98 pty masters; for /dev/ptmx */
+extern int pty_limit;		/* Config limit on Unix98 ptys */
+static DEFINE_IDR(allocated_ptys);
+static DECLARE_MUTEX(allocated_ptys_lock);
+static int ptmx_open(struct inode *, struct file *);
+#endif
 
 extern void disable_early_printk(void);
 
@@ -177,8 +196,28 @@ EXPORT_SYMBOL(tty_register_ldisc);
 
 struct tty_ldisc *tty_ldisc_get(int disc)
 {
-	panic("in tty_ldisc_get");
-	return NULL;
+	unsigned long flags;
+	struct tty_ldisc *ld;
+
+	if (disc < N_TTY || disc >= NR_LDISCS)
+		return NULL;
+	
+	spin_lock_irqsave(&tty_ldisc_lock, flags);
+
+	ld = &tty_ldiscs[disc];
+	/* Check the entry is defined */
+	if(ld->flags & LDISC_FLAG_DEFINED)
+	{
+		/* If the module is being unloaded we can't use it */
+		if (!try_module_get(ld->owner))
+		       	ld = NULL;
+		else /* lock it */
+			ld->refcount++;
+	}
+	else
+		ld = NULL;
+	spin_unlock_irqrestore(&tty_ldisc_lock, flags);
+	return ld;
 }
 
 EXPORT_SYMBOL_GPL(tty_ldisc_get);
@@ -344,6 +383,19 @@ static struct file_operations tty_fops = {
 	.release	= tty_release,
 	.fasync		= tty_fasync,
 };
+
+#ifdef CONFIG_UNIX98_PTYS
+static struct file_operations ptmx_fops = {
+	.llseek		= no_llseek,
+	.read		= tty_read,
+	.write		= tty_write,
+	.poll		= tty_poll,
+	.ioctl		= tty_ioctl,
+	.open		= ptmx_open,
+	.release	= tty_release,
+	.fasync		= tty_fasync,
+};
+#endif
 
 static struct file_operations console_fops = {
 	.llseek		= no_llseek,
@@ -787,6 +839,14 @@ got_driver:
 	return 0;
 }
 
+#ifdef CONFIG_UNIX98_PTYS
+static int ptmx_open(struct inode * inode, struct file * filp)
+{
+	panic("in ptmx_open");
+	return 0;
+}
+#endif
+
 static int tty_release(struct inode * inode, struct file * filp)
 {
 	lock_kernel();
@@ -1033,12 +1093,29 @@ static struct class_simple *tty_class;
 void tty_register_device(struct tty_driver *driver, unsigned index,
 			 struct device *device)
 {
-    panic("in tty_register_device");
+	char name[64];
+	dev_t dev = MKDEV(driver->major, driver->minor_start + index);
+
+	if (index >= driver->num) {
+		printk(KERN_ERR "Attempt to register invalid tty line number "
+		       " (%d).\n", index);
+		return;
+	}
+
+	devfs_mk_cdev(dev, S_IFCHR | S_IRUSR | S_IWUSR,
+			"%s%d", driver->devfs_name, index + driver->name_base);
+	
+	if (driver->type == TTY_DRIVER_TYPE_PTY)
+		pty_line_name(driver, index, name);
+	else
+		tty_line_name(driver, index, name);
+	class_simple_device_add(tty_class, dev, device, name);
 }
 
 void tty_unregister_device(struct tty_driver *driver, unsigned index)
 {
-    panic("in tty_unregister_device");
+    devfs_remove("%s%d", driver->devfs_name, index + driver->name_base);
+	class_simple_device_remove(MKDEV(driver->major, driver->minor_start) + index);
 }
 
 EXPORT_SYMBOL(tty_register_device);
@@ -1096,8 +1173,71 @@ EXPORT_SYMBOL(tty_set_operations);
 
 int tty_register_driver(struct tty_driver *driver)
 {
-    panic("in tty_register_driver");
-    return 0;
+	int error;
+        int i;
+	dev_t dev;
+	void **p = NULL;
+
+	if (driver->flags & TTY_DRIVER_INSTALLED)
+		return 0;
+	
+	if (!(driver->flags & TTY_DRIVER_DEVPTS_MEM)) {
+		p = kmalloc(driver->num * 3 * sizeof(void *), GFP_KERNEL);
+		if (!p)
+			return -ENOMEM;
+		memset(p, 0, driver->num * 3 * sizeof(void *));
+	}
+
+	if (!driver->major) {
+		error = alloc_chrdev_region(&dev, driver->minor_start, driver->num,
+						(char*)driver->name);
+		if (!error) {
+			driver->major = MAJOR(dev);
+			driver->minor_start = MINOR(dev);
+		}
+	} else {
+		dev = MKDEV(driver->major, driver->minor_start);
+		error = register_chrdev_region(dev, driver->num,
+						(char*)driver->name);
+	}
+	if (error < 0) {
+		kfree(p);
+		return error;
+	}
+
+	if (p) {
+		driver->ttys = (struct tty_struct **)p;
+		driver->termios = (struct termios **)(p + driver->num);
+		driver->termios_locked = (struct termios **)(p + driver->num * 2);
+	} else {
+		driver->ttys = NULL;
+		driver->termios = NULL;
+		driver->termios_locked = NULL;
+	}
+
+	cdev_init(&driver->cdev, &tty_fops);
+	driver->cdev.owner = driver->owner;
+	error = cdev_add(&driver->cdev, dev, driver->num);
+	if (error) {
+		cdev_del(&driver->cdev);
+		unregister_chrdev_region(dev, driver->num);
+		driver->ttys = NULL;
+		driver->termios = driver->termios_locked = NULL;
+		kfree(p);
+		return error;
+	}
+
+	if (!driver->put_char)
+		driver->put_char = tty_default_put_char;
+
+	list_add(&driver->tty_drivers, &tty_drivers);
+
+	if (!(driver->flags & TTY_DRIVER_NO_DEVFS)) {
+		for(i = 0; i < driver->num; i++)
+		    tty_register_device(driver, i, NULL);
+	}
+	proc_tty_register_driver(driver);
+	return 0;
 }
 
 EXPORT_SYMBOL(tty_register_driver);
@@ -1154,6 +1294,12 @@ static int __init tty_class_init(void)
 postcore_initcall(tty_class_init);
 
 static struct cdev tty_cdev, console_cdev;
+#ifdef CONFIG_UNIX98_PTYS
+static struct cdev ptmx_cdev;
+#endif
+#ifdef CONFIG_VT
+static struct cdev vc0_cdev;
+#endif
 
 static int __init tty_init(void)
 {
@@ -1171,7 +1317,26 @@ static int __init tty_init(void)
 	devfs_mk_cdev(MKDEV(TTYAUX_MAJOR, 1), S_IFCHR|S_IRUSR|S_IWUSR, "console");
 	class_simple_device_add(tty_class, MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
 
-	// @todo
+#ifdef CONFIG_UNIX98_PTYS
+	cdev_init(&ptmx_cdev, &ptmx_fops);
+	if (cdev_add(&ptmx_cdev, MKDEV(TTYAUX_MAJOR, 2), 1) ||
+	    register_chrdev_region(MKDEV(TTYAUX_MAJOR, 2), 1, "/dev/ptmx") < 0)
+		panic("Couldn't register /dev/ptmx driver\n");
+	devfs_mk_cdev(MKDEV(TTYAUX_MAJOR, 2), S_IFCHR|S_IRUGO|S_IWUGO, "ptmx");
+	class_simple_device_add(tty_class, MKDEV(TTYAUX_MAJOR, 2), NULL, "ptmx");
+#endif
+
+#ifdef CONFIG_VT
+	cdev_init(&vc0_cdev, &console_fops);
+	if (cdev_add(&vc0_cdev, MKDEV(TTY_MAJOR, 0), 1) ||
+	    register_chrdev_region(MKDEV(TTY_MAJOR, 0), 1, "/dev/vc/0") < 0)
+		panic("Couldn't register /dev/tty0 driver\n");
+	devfs_mk_cdev(MKDEV(TTY_MAJOR, 0), S_IFCHR|S_IRUSR|S_IWUSR, "vc/0");
+	class_simple_device_add(tty_class, MKDEV(TTY_MAJOR, 0), NULL, "tty0");
+
+	vty_init();
+#endif
+
     return 0;
 }
 

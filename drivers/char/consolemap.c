@@ -201,6 +201,50 @@ unsigned short *set_translate(int m,int currcons)
 	return translations[m];
 }
 
+unsigned char inverse_translate(struct vc_data *conp, int glyph)
+{
+	panic("in inverse_translate");
+	return 0;
+}
+
+static void update_user_maps(void)
+{
+	panic("in update_user_maps");
+}
+
+int con_set_trans_old(unsigned char __user * arg)
+{
+	panic("in con_set_trans_old");
+	return 0;
+}
+
+int con_get_trans_old(unsigned char __user * arg)
+{
+	panic("in con_get_trans_old");
+	return 0;
+}
+
+int con_set_trans_new(ushort __user * arg)
+{
+	panic("in con_set_trans_new");
+	return 0;
+}
+
+int con_get_trans_new(ushort __user * arg)
+{
+	int i;
+	unsigned short *p = translations[USER_MAP];
+
+	i = verify_area(VERIFY_WRITE, arg, E_TABSZ*sizeof(unsigned short));
+	if (i)
+		return i;
+
+	for (i=0; i<E_TABSZ ; i++)
+	  __put_user(p[i], arg+i);
+	
+	return 0;
+}
+
 /*
  * Unicode -> current font conversion 
  *
@@ -341,6 +385,13 @@ int con_clear_unimap(int con, struct unimapinit *ui)
 	return 0;
 }
 
+int
+con_set_unimap(int con, ushort ct, struct unipair __user *list)
+{
+	panic("in con_set_unimap");
+	return 0;
+}
+
 /* Loads the unimap for the hardware font, as defined in uni_hash.tbl.
    The representation used was the most compact I could come up
    with.  This routine is executed at sys_setup time, and when the
@@ -395,6 +446,28 @@ con_set_default_unimap(int con)
 EXPORT_SYMBOL(con_set_default_unimap);
 
 int
+con_copy_unimap(int dstcon, int srccon)
+{
+	panic("in con_copy_unimap");
+	return 0;
+}
+
+int
+con_get_unimap(int con, ushort ct, ushort __user *uct, struct unipair __user *list)
+{
+	panic("in con_get_unimap");
+	return 0;
+}
+
+void con_protect_unimap(int con, int rdonly)
+{
+	struct uni_pagedir *p = (struct uni_pagedir *)
+		*vc_cons[con].d->vc_uni_pagedir_loc;
+	
+	if (p) p->readonly = rdonly;
+}
+
+int
 conv_uni_to_pc(struct vc_data *conp, long ucs) 
 {
 	int h;
@@ -427,3 +500,15 @@ conv_uni_to_pc(struct vc_data *conp, long ucs)
 
 	return -4;		/* not found */
 }
+
+void __init 
+console_map_init(void)
+{
+	int i;
+	
+	for (i = 0; i < MAX_NR_CONSOLES; i++)
+		if (vc_cons_allocated(i) && !*vc_cons[i].d->vc_uni_pagedir_loc)
+			con_set_default_unimap(i);
+}
+
+EXPORT_SYMBOL(con_copy_unimap);
